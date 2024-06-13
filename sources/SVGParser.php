@@ -8,9 +8,7 @@ use Exception;
 use SimpleXMLElement;
 use stdClass;
 
-/**
- *
- */
+#[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
 {
     public const VERSION                       = 3.0;
