@@ -11,8 +11,9 @@ interface SVGParserInterface
      * Создает экземпляр класса
      *
      * @param $svg_file_content
+     * @param array $options
      */
-    public function __construct( $svg_file_content );
+    public function __construct( $svg_file_content, array $options = [] );
 
     /**
      * Парсит информацию об изображениях. Передается имя слоя (в противном случае изображения ищутся по всей SVG)

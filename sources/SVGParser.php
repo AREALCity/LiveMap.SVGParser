@@ -34,13 +34,13 @@ class SVGParser implements SVGParserInterface
     public const PATHSEG_LINETO_REL            = 9;
     public const PATHSEG_LINETO_ABS            = 10;
 
-    public const NAMESPACES = array(
+    public const NAMESPACES = [
         'svg'       =>  'http://www.w3.org/2000/svg',
         'xlink'     =>  'http://www.w3.org/1999/xlink',
         'inkscape'  =>  'http://www.inkscape.org/namespaces/inkscape',
         'sodipodi'  =>  'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
         'rdf'       =>  'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
-    );
+    ];
 
     private $svg;
     public  $svg_parsing_error = null;
@@ -59,13 +59,12 @@ class SVGParser implements SVGParserInterface
      */
     public array $layer_images_translation = [];
 
-
-    // сдвиг слоя-контейнера с изображениями
-    private $layer_images_oxy = []; // useless?
-
-    // данные трансляции из модели CSV XY в Screen CRS
-    // = layer_paths_oxy
-    public $crs_translation_options = null;
+    /**
+     * данные трансляции из модели CSV XY в Screen CRS
+     *
+     * @var array
+     */
+    public array $crs_translation_options = [];
 
     // Имя текущего слоя-контейнера с данными
     private $layer_name = '';
@@ -90,9 +89,24 @@ class SVGParser implements SVGParserInterface
     /**
      * @inheritDoc
      */
-    public function __construct( $svg_file_content )
+    public function __construct( $svg_file_content, array $options = [] )
     {
         \libxml_use_internal_errors(true);
+
+        $allowEllipse
+            = array_key_exists('allowEllipse', $options)
+            ? $options['allowEllipse']
+            : false;
+
+        $roundPrecision
+            = array_key_exists('roundPrecision', $options)
+            ? $options['roundPrecision']
+            : 4;
+
+        $registerNamespaces
+            = array_key_exists('registerNamespaces', $options)
+            ? $options['registerNamespaces']
+            : true;
 
         try {
             if (!is_readable($svg_file_content)) {
