@@ -5,6 +5,8 @@ namespace LiveMapEngine;
 use Arris\Entity\Result;
 use Arris\Toolkit\XMLNavigator\Convertation\FastXmlToArray;
 use Exception;
+use LiveMapEngine\Entity\CRSTranslationOptions;
+use LiveMapEngine\Entity\LayerElementsTranslation;
 use SimpleXMLElement;
 use stdClass;
 
@@ -55,25 +57,39 @@ class SVGParser implements SVGParserInterface
     /**
      * Информация о сдвиге (transform translation) контейнера с изображениями на холсте
      *
-     * @var array
+     * @var ?LayerElementsTranslation
      */
-    public array $layer_images_translation = [];
+    public ?LayerElementsTranslation $layer_images_translation = null;
 
     /**
      * данные трансляции из модели CSV XY в Screen CRS
      *
+     * @var CRSTranslationOptions|null
+     */
+    public ?CRSTranslationOptions $crs_translation_options = null;
+
+    /**
+     * Имя текущего слоя-контейнера с данными
+     *
+     * @var string
+     */
+    private string $layer_name = '';
+
+    //
+    /**
+     * Текущий слой-контейнер с данными.
+     *
      * @var array
      */
-    public array $crs_translation_options = [];
+    private array $layer_elements = [];
 
-    // Имя текущего слоя-контейнера с данными
-    private $layer_name = '';
-
-    // Текущий слой-контейнер с данными.
-    private $layer_elements = [];
-
-    // Сдвиг (translate) элементов на текущем слое
-    private $layer_elements_translation = null;
+    //
+    /**
+     * Сдвиг (translate) элементов на текущем слое
+     *
+     * @var ?LayerElementsTranslation
+     */
+    private ?LayerElementsTranslation $layer_elements_translation = null;
 
     // Конфиг текущего слоя
     /**
@@ -176,14 +192,11 @@ class SVGParser implements SVGParserInterface
      * transform="translate(0,1052.36)"
      *
      * @param $transform_definition
-     * @return array [ ox, oy ]
+     * @return LayerElementsTranslation(ox, oy)
      */
-    private function parseTransform($transform_definition): array
+    private function parseTransform($transform_definition): LayerElementsTranslation
     {
-        $default = [
-            'ox'    =>  0,
-            'oy'    =>  0
-        ];
+        $default = new LayerElementsTranslation(0, 0);
 
         if (empty($transform_definition)) {
             return $default;
@@ -191,10 +204,10 @@ class SVGParser implements SVGParserInterface
 
         if (1 == \preg_match('/translate\(\s*([^\s,)]+)[\s,]([^\s,)]+)/', $transform_definition, $translate_matches)) {
             if (count($translate_matches) > 2) {
-                return [
-                    'ox'    =>  (float)$translate_matches[1],
-                    'oy'    =>  (float)$translate_matches[2]
-                ];
+                return new LayerElementsTranslation(
+                    (float)$translate_matches[1],
+                    (float)$translate_matches[2]
+                );
             }
         }
 
@@ -286,11 +299,7 @@ class SVGParser implements SVGParserInterface
     public function set_CRSSimple_TranslateOptions($ox = null , $oy = null, $image_height = null)
     {
         if (!( \is_null($ox) || \is_null($oy) || \is_null($image_height))) {
-            $this->crs_translation_options = [
-                'ox'    =>  $ox,
-                'oy'    =>  $oy,
-                'height'=>  $image_height
-            ];
+            $this->crs_translation_options = new CRSTranslationOptions($ox, $oy, $image_height);
         }
     }
 
@@ -683,8 +692,8 @@ class SVGParser implements SVGParserInterface
     {
 
         if ($options === null) {
-            $ox = $this->layer_elements_translation['ox'];
-            $oy = $this->layer_elements_translation['oy'];
+            $ox = $this->layer_elements_translation->ox;
+            $oy = $this->layer_elements_translation->oy;
         } else {
             $ox = $options['ox'];
             $oy = $options['oy'];
@@ -806,14 +815,14 @@ class SVGParser implements SVGParserInterface
         $height = 0;
 
         if ($this->layer_elements_translation) {
-            $ox += $this->layer_elements_translation['ox'];
-            $oy += $this->layer_elements_translation['oy'];
+            $ox += $this->layer_elements_translation->ox;
+            $oy += $this->layer_elements_translation->oy;
         }
 
         if ($this->crs_translation_options) {
-            $ox += $this->crs_translation_options['ox'];
-            $oy += $this->crs_translation_options['oy'];
-            $height = $this->crs_translation_options['height'];
+            $ox += $this->crs_translation_options->ox;
+            $oy += $this->crs_translation_options->oy;
+            $height = $this->crs_translation_options->height;
         }
 
         // (X, Y) => (Height - (Y-oY) , (X-oX)
