@@ -2,13 +2,15 @@
 
 namespace LiveMapEngine;
 
+use stdClass;
+use Exception;
+use SimpleXMLElement;
+
 use Arris\Entity\Result;
 use Arris\Toolkit\XMLNavigator\Convertation\FastXmlToArray;
-use Exception;
-use LiveMapEngine\Entity\CRSTranslationOptions;
-use LiveMapEngine\Entity\LayerElementsTranslation;
-use SimpleXMLElement;
-use stdClass;
+
+use LiveMapEngine\SVGParser\Entity\CRSTranslationOptions;
+use LiveMapEngine\SVGParser\Entity\LayerElementsTranslation;
 
 #[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
@@ -98,7 +100,7 @@ class SVGParser implements SVGParserInterface
     /**
      * @var ?Result
      */
-    public ?Result $result_state = null;
+    public ?Result $parser_state = null;
 
     /* =========== Опции =========== */
 
@@ -118,6 +120,7 @@ class SVGParser implements SVGParserInterface
     public function __construct($svg_file_content = '', array $options = [] )
     {
         \libxml_use_internal_errors(true);
+        $this->parser_state = new Result();
 
         $this->PARSER_ALLOW_ELLIPSE
             = array_key_exists('allowEllipse', $options)
@@ -148,7 +151,9 @@ class SVGParser implements SVGParserInterface
             }
 
         } catch (Exception $e) {
-            $this->result_state = (new Result())->error($e->getMessage())->setCode($e->getCode());
+            $this->parser_state
+                ->error($e->getMessage())
+                ->setCode( $e->getCode());
         }
     }
 
@@ -228,6 +233,9 @@ class SVGParser implements SVGParserInterface
 
     /**
      * @inheritDoc
+     *
+    //@todo: return LiveMapEngine\SVGParser\Entity\ImageInfo
+     *
      */
     public function getImageInfo(int $index = 0): array
     {
@@ -249,6 +257,7 @@ class SVGParser implements SVGParserInterface
             $an_image_translate_x = (float)$this->layer_images_translation['ox'] ?? 0;
             $an_image_translate_y = (float)$this->layer_images_translation['oy'] ?? 0;
 
+            //@todo: return LiveMapEngine\Entity\ImageInfo
             return [
                 'width'     =>  \round((float)$an_image->attributes()->{'width'} ?? 0, $this->ROUND_PRECISION),
                 'height'    =>  \round((float)$an_image->attributes()->{'height'} ?? 0, $this->ROUND_PRECISION),

@@ -1,6 +1,6 @@
 <?php
 
-namespace LiveMapEngine\Entity;
+namespace LiveMapEngine\SVGParser\Entity;
 
 class CRSTranslationOptions
 {
