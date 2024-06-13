@@ -152,7 +152,8 @@ class SVGParser implements SVGParserInterface
 
         } catch (Exception $e) {
             $this->parser_state
-                ->error($e->getMessage())
+                ->error()
+                ->setMessage($e->getMessage())
                 ->setCode( $e->getCode());
         }
     }

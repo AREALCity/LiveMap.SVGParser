@@ -14,7 +14,7 @@
         "ext-simplexml": "*",
         "ext-libxml": "*",
         "ext-json": "*",
-        "karelwintersky/arris.entity": "^0.9.8",
+        "karelwintersky/arris.entity": "^0.9.10",
         "karelwintersky/arris.xml-navigator": "^0.1.1"
     },
     "autoload": {
