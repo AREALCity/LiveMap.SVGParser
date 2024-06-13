@@ -64,7 +64,7 @@ interface SVGParserInterface
      * @param string $type
      * @return array
      */
-    public function parseAloneElement(SimpleXMLElement $element, string $type);
+    public function parseAloneElement(SimpleXMLElement $element, string $type):array;
 
     /**
      * Получаем элементы по типу (rect, circle, path)

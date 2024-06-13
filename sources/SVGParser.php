@@ -103,6 +103,14 @@ class SVGParser implements SVGParserInterface
     public ?Result $parser_state = null;
 
     /* =========== Опции =========== */
+    /**
+     * Внутренние опции парсера, меняющие поведение. Задаются через конструктор.
+     *
+     * @var array
+     */
+    private array $INTERNAL_OPTIONS = [
+
+    ];
 
     /**
      * Точность округления
@@ -111,7 +119,19 @@ class SVGParser implements SVGParserInterface
      */
     private int $ROUND_PRECISION = 4;
 
+    /**
+     * false: эллипсы приводятся к окружностям
+     * true: парсим эллипсы, на стороне JS требуется плагин
+     * @var bool
+     */
     private bool $PARSER_ALLOW_ELLIPSE = false;
+
+    /**
+     * Разрешать ли возвращать пустые элементы (например, окружности с радиусом меньшим порога точности)?
+     *
+     * @var bool
+     */
+    private bool $OPTION_ALLOW_EMPTY_ELEMENTS = false;
 
 
     /**
@@ -122,19 +142,24 @@ class SVGParser implements SVGParserInterface
         \libxml_use_internal_errors(true);
         $this->parser_state = new Result();
 
+        $this->OPTION_ALLOW_EMPTY_ELEMENTS
+            = array_key_exists('allowEmptyElements', $options)
+            ? (bool)$options['allowEmptyElements']
+            : false;
+
         $this->PARSER_ALLOW_ELLIPSE
             = array_key_exists('allowEllipse', $options)
-            ? $options['allowEllipse']
+            ? (bool)$options['allowEllipse']
             : false;
 
         $this->ROUND_PRECISION
             = array_key_exists('roundPrecision', $options)
-            ? $options['roundPrecision']
+            ? (int)$options['roundPrecision']
             : 4;
 
         $registerNamespaces
             = array_key_exists('registerNamespaces', $options)
-            ? $options['registerNamespaces']
+            ? (bool)$options['registerNamespaces']
             : true;
 
         try {
@@ -230,6 +255,26 @@ class SVGParser implements SVGParserInterface
         }
 
         return $default;
+    }
+
+    /**
+     * Возвращает параметры поворота при трансформации-повороте
+     * Значение атрибута ожидается вида "rotate(45.8)"
+     *
+     * @param string $transform_definition
+     * @return float
+     */
+    private function parseTransformRotate(string $transform_definition):float
+    {
+        if (empty($transform_definition)) {
+            return 0;
+        }
+
+        if (1 == \preg_match('/rotate\([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)\)/', $transform_definition, $matches)) {
+            return (float)$matches[1];
+        }
+
+        return 0;
     }
 
     /**
@@ -332,7 +377,7 @@ class SVGParser implements SVGParserInterface
      * @param string $type
      * @return array
      */
-    public function parseAloneElement(SimpleXMLElement $element, string $type)
+    public function parseAloneElement(SimpleXMLElement $element, string $type): array
     {
         $data = [];   // блок данных о пути
 
@@ -352,11 +397,16 @@ class SVGParser implements SVGParserInterface
         $data['id'] = $path_id;
         $data['label'] = $element_attributes["inkscape:label"] ?? $path_id;
 
+        // если это фигура типа ellipse И парсеру не разрешено распознавать ellipse,
+        // то трактуем фигуру как окружность с приведением к эллипсу
+        if ($type === "ellipse" && !$this->PARSER_ALLOW_ELLIPSE) {
+            $type = "ellipse-as-circle";
+        }
+
         switch ($type) {
             /*
              * За POI-маркер отвечает Inkscape-элемент SPIRALE (точкой установки маркера является ЦЕНТР спирали)
-             *
-             * Теперь нам нужен INKSCAPE SVG файл
+             * Поддерживается только в INKSCAPE-файлах с нэймспейсом sodipodi
              */
             case 'marker': {
                 $data['type'] = 'marker';
@@ -398,7 +448,11 @@ class SVGParser implements SVGParserInterface
                 $data['type'] = 'circle';
 
                 $r = $element->attributes()->{'r'} ?? 0;
-                $data['radius'] = \round((float)$r, $this->ROUND_PRECISION); //@todo: точность выносим в опции конструктора
+                $data['radius'] = \round((float)$r, $this->ROUND_PRECISION);
+
+                if ($data['radius'] == 0) {
+                    return [];
+                }
 
                 // SVG Path -> Polygon
                 $coords = $this->convert_SVGElement_to_Circle( $element );
@@ -433,20 +487,18 @@ class SVGParser implements SVGParserInterface
 
                 break;
             }
-            case 'ellipse': {
+            case 'ellipse-as-circle': {
                 $data['type'] = 'circle';
 
                 $rx = $element->attributes()->{'rx'} ?? 0;
                 $ry = $element->attributes()->{'ry'} ?? 0;
 
-                /*
-                 * Эллипс мы рисовать не умеем, поэтому приводим его к окружности
-                 */
+                // приводим параметры эллипса к окружности, по этой же причине анализировать атрибут transform=rotate не будем
                 $data['radius'] = \round( ( (float)$rx + (float)$ry ) /2 , $this->ROUND_PRECISION);
 
                 // SVG Element to coords
                 $coords = $this->convert_SVGElement_to_Circle( $element );
-                if (!$coords) {
+                if (empty($coords)) {
                     return [];
                 }
 
@@ -456,6 +508,46 @@ class SVGParser implements SVGParserInterface
                 $data['coords'] = $coords;
                 $data['js'] = $this->convert_knotCRS_to_JSstring( $data['coords'] );
 
+                break;
+            }
+            case 'ellipse': {
+                $data['type'] = 'ellipse';
+
+                $center = [
+                    'x' =>  (string)$element->attributes()->{'cx'} ?? 0,
+                    'y' =>  (string)$element->attributes()->{'cy'} ?? 0
+                ];
+
+                $rx = $element->attributes()->{'rx'} ?? 0;
+                $ry = $element->attributes()->{'ry'} ?? 0;
+
+                if (
+                    (
+                        \round($rx, $this->ROUND_PRECISION) +
+                        \round($ry, $this->ROUND_PRECISION)
+                    ) == 0
+                ) {
+                    return [];
+                }
+
+                //@todo: еще нужно обрабатывать атрибут поворота (нужен пример)
+                // "transform="rotate(45.8)"
+                $transform = $element->attributes()->{'transform'} ?? '';
+                $rotate = $this->parseTransformRotate($transform);
+
+                // сдвиг координат и преобразрвание в CRS-модель
+                $center = $this->translate_knot_from_XY_to_CRS( $center );
+                $data['coords'] = $center;
+
+                $data['js']
+                    = '[ ['
+                    . implode(',', $center)
+                    . '], ['
+                    . implode(',', [ $rx, $ry ])
+                    . '], '
+                    . $rotate
+                    . ']'
+                ;
                 break;
             }
         }
@@ -488,46 +580,52 @@ class SVGParser implements SVGParserInterface
         // кастомные значения для пустых регионов
         if ($this->layer_elements_config) {
             if (
-                self::property_exists_recursive($this->layer_elements_config, 'empty->fill') &&
-                $this->layer_elements_config->empty->fill == 1
+                self::property_exists_recursive($this->layer_elements_config, 'empty->fill')
+                && $this->layer_elements_config->empty->fill == 1
             ) {
                 if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillColor') &&
-                    $this->layer_elements_config->empty->fillColor && !$data['fillColor']
+                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillColor')
+                    && $this->layer_elements_config->empty->fillColor
+                    && !$data['fillColor']
                 ) {
                     $data['fillColor'] = $this->layer_elements_config->empty->fillColor;
                 }
 
                 if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillOpacity') &&
-                    $this->layer_elements_config->empty->fillOpacity && !$data['fillOpacity']
+                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillOpacity')
+                    && $this->layer_elements_config->empty->fillOpacity
+                    && !$data['fillOpacity']
                 ) {
                     $data['fillOpacity'] = $this->layer_elements_config->empty->fillOpacity;
                 }
             } // if ... $this->layer_elements_config->empty->fill == 1)
 
             if (
-                self::property_exists_recursive($this->layer_elements_config, 'empty->stroke') &&
-                $this->layer_elements_config->empty->stroke && $this->layer_elements_config->empty->stroke == 1
+                self::property_exists_recursive($this->layer_elements_config, 'empty->stroke')
+                && $this->layer_elements_config->empty->stroke
+                && $this->layer_elements_config->empty->stroke == 1
             ) {
 
                 if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderColor') &&
-                    $this->layer_elements_config->empty->borderColor && $data['borderColor']
+                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderColor')
+                    && $this->layer_elements_config->empty->borderColor
+                    && $data['borderColor']
                 ) {
                     $data['borderColor'] = $this->layer_elements_config->empty->borderColor;
                 }
 
                 if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderWidth') &&
-                    $this->layer_elements_config->empty->borderWidth && $data['borderWidth']
+                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderWidth')
+                    && $this->layer_elements_config->empty->borderWidth
+                    && $data['borderWidth']
                 ) {
                     $data['borderWidth'] = $this->layer_elements_config->empty->borderWidth;
                 }
 
                 if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderOpacity') &&
-                    $this->layer_elements_config->empty->borderOpacity && $data['borderOpacity']
+                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderOpacity')
+                    && $this->layer_elements_config->empty->borderOpacity
+                    && $data['borderOpacity']
                 ) {
                     $data['borderOpacity'] = $this->layer_elements_config->empty->borderOpacity;
                 }
@@ -580,7 +678,7 @@ class SVGParser implements SVGParserInterface
      * @param $type
      * @return array
      */
-    public function getElementsByType( $type )
+    public function getElementsByType($type)
     {
         /** @var SimpleXMLElement $path */
         $all_paths = [];
@@ -588,7 +686,16 @@ class SVGParser implements SVGParserInterface
         foreach ($this->layer_elements->{$type} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
 
-            $all_paths[ $path_id ] = $this->parseAloneElement($path, $type);
+            $parsed_element = $this->parseAloneElement($path, $type);
+
+            /*if (!empty($parsed_element)) {
+                $all_paths[ $path_id ] = $parsed_element;
+            } else {
+                if ($this->OPTION_ALLOW_EMPTY_ELEMENTS) {
+                    $all_paths[ $path_id ] = $parsed_element;
+                }
+            }*/
+            $all_paths[ $path_id ] = $parsed_element;
         }
 
         return $all_paths;
@@ -712,7 +819,6 @@ class SVGParser implements SVGParserInterface
      */
     private function apply_transform_for_knot( $knot , $options = null)
     {
-
         if ($options === null) {
             $ox = $this->layer_elements_translation->ox;
             $oy = $this->layer_elements_translation->oy;
@@ -728,7 +834,7 @@ class SVGParser implements SVGParserInterface
     }
 
     /**
-     * применяет трансформацию к субполигону
+     * Применяет трансформацию к субполигону
      *
      * @param $subpolyline
      * @param $options
@@ -908,22 +1014,32 @@ class SVGParser implements SVGParserInterface
     private function convert_SVGElement_to_Polygon( $element )
     {
         // @var SimpleXMLElement $element
-        // получаем значение атрибута <path d="">
-        $path     = (string)$element->attributes()->{'d'};
+        $path     = (string)$element->attributes()->{'d'};    // получаем значение атрибута <path d="">
+        $path     = trim($path);                        // образаем начальные и конечные пробелы
 
         $xy = [];
         $is_debug = false;
 
         // пуст ли путь?
-        if ($path === '') {
+        if (empty($path)) {
             return [];
         }
 
-        // если путь не заканчивается на z/Z - это какая-то херня, а не путь. Отбрасываем
-        //@todo: [УЛУЧШИТЬ] PARSE_SVG -- unfinished paths may be correct?
+        // Если путь не заканчивается на z/Z - это какая-то херня, а не путь. Отбрасываем. Хотя символ Z опциональный,
+        // мы работаем только с замкнутыми полигонами, в котором Z должен быть
         if ( 'z' !== \strtolower(\substr($path, -1)) ) {
             return [];
         }
+        /*
+        Z. Z (or z, it doesn’t matter) “closes” the path. Like any other command, it’s optional.
+        It’s a cheap n’ easy way to draw a straight line directly back to the last place the “pen”
+        was set down (probably the last M or m command). It saves you from having to repeat that
+        first location and using a line command to get back there.
+
+        Хотя в официальной документации ничего не сказано про "необязательность", только
+
+        A closed subpath must be closed with a "closepath" command, this "joins" the first and last path segments.
+        */
 
         // выясняем наличие атрибута transform:translate (другие варианты трансформации не обрабатываются)
         $translate = [
@@ -944,6 +1060,7 @@ class SVGParser implements SVGParserInterface
             return [];
         }
 
+        // предполагается, что это не минифицированный SVG...
         $path_fragments = \explode(' ', $path);
 
         $polygon = [];             // массив узлов полигона
@@ -969,7 +1086,7 @@ class SVGParser implements SVGParserInterface
                 $fragment = 'z';
             }
 
-            if ( \strpbrk($fragment, 'MmZzHhVvLl') ) {    // faster than if (preg_match('/(M|m|Z|z|H|h|V|v|L|l)/', $fragment) > 0)
+            if ( \strpbrk($fragment, 'MmZzHhVvLl') ) {
                 switch ($fragment) {
                     case 'M' : {
                         $LOOKAHEAD_FLAG = self::PATHSEG_MOVETO_ABS;
@@ -1039,7 +1156,6 @@ class SVGParser implements SVGParserInterface
                     $path_start_y = $prev_knot_y;
 
                     if ($matches_count > 0) {
-                        //@todo: bcmath - bcadd(x, y)
                         $xy = [
                             'x' =>  (float)$path_start_x + (float)$knot['X'],
                             'y' =>  (float)$path_start_y + (float)$knot['Y']
@@ -1314,10 +1430,8 @@ class SVGParser implements SVGParserInterface
         $w = $element->attributes()->{'width'} ?? 0;
         $h = $element->attributes()->{'height'} ?? 0;
 
-        //@todo: правильно будет поиграться в пределах точности
-        // if (\round($w + $h, $this->ROUND_PRECISION) == 0)
-
-        if (0 == ($w + $h)) {
+        // не рисуем rect если высота или ширина меньше предела точности
+        if (0 == (\round($w, $this->ROUND_PRECISION) + \round($h, $this->ROUND_PRECISION)) ) {
             return [];
         }
 
@@ -1468,8 +1582,6 @@ PDT;
         return self::property_exists_recursive($object, \implode('->', $properties));
     }
 
-
-
-
-
 }
+
+#-eof-
