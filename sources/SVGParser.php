@@ -45,14 +45,19 @@ class SVGParser implements SVGParserInterface
         'rdf'       =>  'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
     ];
 
-    private $svg;
+    /**
+     * Весь SVG-объект
+     *
+     * @var SimpleXMLElement|null
+     */
+    private ?SimpleXMLElement $svg;
 
     /**
      * Массив с информацией об изображениях
      *
-     * @var array
+     * @var false|null|SimpleXMLElement[]
      */
-    private array $layer_images = [];
+    private array|null|false $layer_images = [];
 
     /**
      * Информация о сдвиге (transform translation) контейнера с изображениями на холсте
@@ -79,9 +84,9 @@ class SVGParser implements SVGParserInterface
     /**
      * Текущий слой-контейнер с данными.
      *
-     * @var array
+     * @var SimpleXMLElement|null
      */
-    public array $layer_elements = [];
+    public ?SimpleXMLElement $layer_elements = null;
 
     //
     /**
@@ -91,18 +96,22 @@ class SVGParser implements SVGParserInterface
      */
     public ?LayerElementsTranslation $layer_elements_translation = null;
 
-    // Конфиг текущего слоя
     /**
-     * @var stdClass null
+     * Конфиг текущего слоя
+     *
+     * @var stdClass|null
      */
     private ?stdClass $layer_elements_config = null;
 
     /**
+     * Статус для анализа
+     *
      * @var ?Result
      */
     public ?Result $parser_state = null;
 
     /* =========== Опции =========== */
+
     /**
      * Внутренние опции парсера, меняющие поведение. Задаются через конструктор.
      *
