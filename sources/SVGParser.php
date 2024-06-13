@@ -14,7 +14,6 @@ use stdClass;
 class SVGParser implements SVGParserInterface
 {
     public const VERSION                       = 3.0;
-    public const ROUND_PRECISION               = 4;
 
     /**
      * Constants for convert_SVGElement_to_Polygon()
@@ -45,7 +44,6 @@ class SVGParser implements SVGParserInterface
     ];
 
     private $svg;
-    public  $svg_parsing_error = null;
 
     /**
      * Массив с информацией об изображениях
@@ -59,21 +57,21 @@ class SVGParser implements SVGParserInterface
      *
      * @var ?LayerElementsTranslation
      */
-    public ?LayerElementsTranslation $layer_images_translation = null;
+    protected ?LayerElementsTranslation $layer_images_translation = null;
 
     /**
      * данные трансляции из модели CSV XY в Screen CRS
      *
      * @var CRSTranslationOptions|null
      */
-    public ?CRSTranslationOptions $crs_translation_options = null;
+    protected ?CRSTranslationOptions $crs_translation_options = null;
 
     /**
      * Имя текущего слоя-контейнера с данными
      *
      * @var string
      */
-    private string $layer_name = '';
+    public string $layer_name = '';
 
     //
     /**
@@ -81,7 +79,7 @@ class SVGParser implements SVGParserInterface
      *
      * @var array
      */
-    private array $layer_elements = [];
+    public array $layer_elements = [];
 
     //
     /**
@@ -89,32 +87,44 @@ class SVGParser implements SVGParserInterface
      *
      * @var ?LayerElementsTranslation
      */
-    private ?LayerElementsTranslation $layer_elements_translation = null;
+    public ?LayerElementsTranslation $layer_elements_translation = null;
 
     // Конфиг текущего слоя
     /**
      * @var stdClass null
      */
-    private $layer_elements_config = null;
+    private ?stdClass $layer_elements_config = null;
 
     /**
      * @var ?Result
      */
     public ?Result $result_state = null;
 
+    /* =========== Опции =========== */
+
+    /**
+     * Точность округления
+     *
+     * @var int
+     */
+    private int $ROUND_PRECISION = 4;
+
+    private bool $PARSER_ALLOW_ELLIPSE = false;
+
+
     /**
      * @inheritDoc
      */
-    public function __construct( $svg_file_content, array $options = [] )
+    public function __construct($svg_file_content = '', array $options = [] )
     {
         \libxml_use_internal_errors(true);
 
-        $allowEllipse
+        $this->PARSER_ALLOW_ELLIPSE
             = array_key_exists('allowEllipse', $options)
             ? $options['allowEllipse']
             : false;
 
-        $roundPrecision
+        $this->ROUND_PRECISION
             = array_key_exists('roundPrecision', $options)
             ? $options['roundPrecision']
             : 4;
@@ -125,14 +135,16 @@ class SVGParser implements SVGParserInterface
             : true;
 
         try {
-            if (!is_readable($svg_file_content)) {
-                throw new Exception("File {$svg_file_content} not readable!");
+            if (empty($svg_file_content)) {
+                throw new Exception("Given SVG content is empty");
             }
 
             $this->svg = new SimpleXMLElement( $svg_file_content );
 
-            foreach (self::NAMESPACES as $ns => $definition) {
-                $this->svg->registerXPathNamespace( $ns, $definition );
+            if ($registerNamespaces) {
+                foreach (self::NAMESPACES as $ns => $definition) {
+                    $this->svg->registerXPathNamespace( $ns, $definition );
+                }
             }
 
         } catch (Exception $e) {
@@ -238,10 +250,10 @@ class SVGParser implements SVGParserInterface
             $an_image_translate_y = (float)$this->layer_images_translation['oy'] ?? 0;
 
             return [
-                'width'     =>  \round((float)$an_image->attributes()->{'width'} ?? 0, self::ROUND_PRECISION),
-                'height'    =>  \round((float)$an_image->attributes()->{'height'} ?? 0, self::ROUND_PRECISION),
-                'ox'        =>  \round($an_image_offset_x + $an_image_translate_x, self::ROUND_PRECISION),
-                'oy'        =>  \round($an_image_offset_y + $an_image_translate_y, self::ROUND_PRECISION),
+                'width'     =>  \round((float)$an_image->attributes()->{'width'} ?? 0, $this->ROUND_PRECISION),
+                'height'    =>  \round((float)$an_image->attributes()->{'height'} ?? 0, $this->ROUND_PRECISION),
+                'ox'        =>  \round($an_image_offset_x + $an_image_translate_x, $this->ROUND_PRECISION),
+                'oy'        =>  \round($an_image_offset_y + $an_image_translate_y, $this->ROUND_PRECISION),
                 'xhref'     =>  (string)$an_image->attributes('xlink', true)->{'href'} ?? ''
             ];
         }
@@ -376,7 +388,7 @@ class SVGParser implements SVGParserInterface
                 $data['type'] = 'circle';
 
                 $r = $element->attributes()->{'r'} ?? 0;
-                $data['radius'] = \round((float)$r, self::ROUND_PRECISION); //@todo: точность выносим в опции конструктора
+                $data['radius'] = \round((float)$r, $this->ROUND_PRECISION); //@todo: точность выносим в опции конструктора
 
                 // SVG Path -> Polygon
                 $coords = $this->convert_SVGElement_to_Circle( $element );
@@ -420,7 +432,7 @@ class SVGParser implements SVGParserInterface
                 /*
                  * Эллипс мы рисовать не умеем, поэтому приводим его к окружности
                  */
-                $data['radius'] = \round( ( (float)$rx + (float)$ry ) /2 , self::ROUND_PRECISION);
+                $data['radius'] = \round( ( (float)$rx + (float)$ry ) /2 , $this->ROUND_PRECISION);
 
                 // SVG Element to coords
                 $coords = $this->convert_SVGElement_to_Circle( $element );
@@ -449,7 +461,7 @@ class SVGParser implements SVGParserInterface
 
         // получаем атрибут fillOpacity
         if (\preg_match('#fill-opacity:([\d]?\.[\d]{0,8})#', $path_style, $path_style_fillOpacity) ) {
-            $data['fillOpacity'] = round($path_style_fillOpacity[1] , self::ROUND_PRECISION);
+            $data['fillOpacity'] = round($path_style_fillOpacity[1] , $this->ROUND_PRECISION);
         } else {
             $data['fillOpacity'] = null;
         };
@@ -793,8 +805,8 @@ class SVGParser implements SVGParserInterface
 
         // (X, Y) => (Height - (Y-oY) , (X-oX)
         return [
-            'x'     =>  \round( $height - ($knot['y'] - $oy), self::ROUND_PRECISION),
-            'y'     =>  \round(           ($knot['x'] - $ox), self::ROUND_PRECISION)
+            'x'     =>  \round( $height - ($knot['y'] - $oy), $this->ROUND_PRECISION),
+            'y'     =>  \round(           ($knot['x'] - $ox), $this->ROUND_PRECISION)
         ];
     }
 
@@ -827,8 +839,8 @@ class SVGParser implements SVGParserInterface
 
         // (X, Y) => (Height - (Y-oY) , (X-oX)
         return [
-            'x'     =>  \round( $height - ($knot['y'] - $oy) , self::ROUND_PRECISION),
-            'y'     =>  \round( $knot['x'] - $ox, self::ROUND_PRECISION)
+            'x'     =>  \round( $height - ($knot['y'] - $oy) , $this->ROUND_PRECISION),
+            'y'     =>  \round( $knot['x'] - $ox, $this->ROUND_PRECISION)
         ];
     }
 
@@ -925,7 +937,7 @@ class SVGParser implements SVGParserInterface
         $path_fragments = \explode(' ', $path);
 
         $polygon = [];             // массив узлов полигона
-        $multipolygon = [];        // массив, содержащий все полигоны. Если в нём один элемент - то у фигуры один полигон.
+        $multipolygon = [];        // Массив, содержащий все полигоны. Если в нём один элемент - то у фигуры один полигон.
 
         $polygon_is_relative = null;    // тип координат: TRUE - Относительные, false - абсолютные, null - не определено
         $prev_knot_x = 0;               // X-координата предыдущего узла
@@ -1293,7 +1305,7 @@ class SVGParser implements SVGParserInterface
         $h = $element->attributes()->{'height'} ?? 0;
 
         //@todo: правильно будет поиграться в пределах точности
-        // if (\round($w + $h, self::ROUND_PRECISION) == 0)
+        // if (\round($w + $h, $this->ROUND_PRECISION) == 0)
 
         if (0 == ($w + $h)) {
             return [];
