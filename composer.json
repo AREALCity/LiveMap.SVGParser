@@ -1,0 +1,24 @@
+{
+    "name": "livemap/svg-parser",
+    "description": "Layout SVG Parser for livemap project",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Karel Wintersky",
+            "email": "karel.wintersky@yandex.ru"
+        }
+    ],
+    "require": {
+        "php": "^7.4 | 8.*",
+        "ext-simplexml": "*",
+        "ext-libxml": "*",
+        "karelwintersky/arris.entity": "^0.9.8",
+        "karelwintersky/arris.xml-navigator": "^0.1.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "LiveMapEngine\\": "sources/"
+        }
+    }
+}
