@@ -15,7 +15,8 @@ use LiveMapEngine\SVGParser\Entity\LayerElementsTranslation;
 #[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
 {
-    public const VERSION                       = 3.0;
+    public const VERSION                        = 3.1;
+    public const GIT_VERSION                    = '0.9.9';
 
     /**
      * Constants for convert_SVGElement_to_Polygon()
@@ -62,16 +63,16 @@ class SVGParser implements SVGParserInterface
     /**
      * Информация о сдвиге (transform translation) контейнера с изображениями на холсте
      *
-     * @var ?LayerElementsTranslation
+     * @var LayerElementsTranslation
      */
-    protected ?LayerElementsTranslation $layer_images_translation = null;
+    protected LayerElementsTranslation $layer_images_translation;
 
     /**
      * данные трансляции из модели CSV XY в Screen CRS
      *
-     * @var CRSTranslationOptions|null
+     * @var CRSTranslationOptions
      */
-    protected ?CRSTranslationOptions $crs_translation_options = null;
+    protected CRSTranslationOptions $crs_translation_options;
 
     /**
      * Имя текущего слоя-контейнера с данными
@@ -92,9 +93,9 @@ class SVGParser implements SVGParserInterface
     /**
      * Сдвиг (translate) элементов на текущем слое
      *
-     * @var ?LayerElementsTranslation
+     * @var LayerElementsTranslation
      */
-    public ?LayerElementsTranslation $layer_elements_translation = null;
+    public LayerElementsTranslation $layer_elements_translation;
 
     /**
      * Конфиг текущего слоя
@@ -106,9 +107,9 @@ class SVGParser implements SVGParserInterface
     /**
      * Статус для анализа
      *
-     * @var ?Result
+     * @var Result
      */
-    public ?Result $parser_state = null;
+    public Result $parser_state;
 
     /* =========== Опции =========== */
 
@@ -183,6 +184,9 @@ class SVGParser implements SVGParserInterface
                     $this->svg->registerXPathNamespace( $ns, $definition );
                 }
             }
+
+            $this->layer_images_translation = new LayerElementsTranslation(0, 0);
+            $this->crs_translation_options = new CRSTranslationOptions();
 
         } catch (Exception $e) {
             $this->parser_state
@@ -289,10 +293,11 @@ class SVGParser implements SVGParserInterface
     /**
      * @inheritDoc
      *
-    //@todo: return LiveMapEngine\SVGParser\Entity\ImageInfo
+    //@todo: return LiveMapEngine\SVGParser\Entity\ImageInfo -- но что возвращать, если изображения нет?
+     * В классе нужно заводить поле is_present и его проверять, что усложняет
      *
      */
-    public function getImageInfo(int $index = 0): array
+    public function getImageInfo(int $index = 0):array
     {
         if (\array_key_exists($index, $this->layer_images)) {
             /**
@@ -309,19 +314,32 @@ class SVGParser implements SVGParserInterface
             $an_image_offset_x = (float)$an_image->attributes()->{'x'} ?? 0;
             $an_image_offset_y = (float)$an_image->attributes()->{'y'} ?? 0;
 
-            $an_image_translate_x = (float)$this->layer_images_translation['ox'] ?? 0;
-            $an_image_translate_y = (float)$this->layer_images_translation['oy'] ?? 0;
+            $an_image_width = (float)$an_image->attributes()->{'width'} ?? 0;
+            $an_image_height = (float)$an_image->attributes()->{'height'} ?? 0;
 
-            //@todo: return LiveMapEngine\Entity\ImageInfo
+            $an_image_translate_x = (float)$this->layer_images_translation->{'ox'} ?? 0;
+            $an_image_translate_y = (float)$this->layer_images_translation->{'oy'} ?? 0;
+
+            /*return new ImageInfo(
+                $an_image_width,
+                $an_image_height,
+                $an_image_offset_x + $an_image_translate_x,
+                $an_image_offset_y + $an_image_translate_y,
+                ($an_image->attributes('xlink', true)->{'href'} ?? ''),
+                \round($an_image_width, $this->ROUND_PRECISION,
+                true)
+            );*/
+
             return [
-                'width'     =>  \round((float)$an_image->attributes()->{'width'} ?? 0, $this->ROUND_PRECISION),
-                'height'    =>  \round((float)$an_image->attributes()->{'height'} ?? 0, $this->ROUND_PRECISION),
+                'width'     =>  \round($an_image_width, $this->ROUND_PRECISION),
+                'height'    =>  \round($an_image_height, $this->ROUND_PRECISION),
                 'ox'        =>  \round($an_image_offset_x + $an_image_translate_x, $this->ROUND_PRECISION),
                 'oy'        =>  \round($an_image_offset_y + $an_image_translate_y, $this->ROUND_PRECISION),
-                'xhref'     =>  (string)$an_image->attributes('xlink', true)->{'href'} ?? ''
+                'xhref'     =>  (string)($an_image->attributes('xlink', true)->{'href'} ?? '')
             ];
         }
 
+        // return new ImageInfo(is_present: false);
         return [];
     }
 
@@ -348,8 +366,6 @@ class SVGParser implements SVGParserInterface
             // получаем сдвиг всех объектов этого слоя
             if (!empty($paths_layer_attrs->attributes()->{'transform'})) {
                 $this->layer_elements_translation = $this->parseTransform( $paths_layer_attrs->attributes()->{'transform'} );
-            } else {
-                $this->layer_elements_translation = null;
             }
 
             $xpath_paths    = '//svg:g[starts-with(@inkscape:label, "' . $layer_name . '")]'; // все возможные объекты

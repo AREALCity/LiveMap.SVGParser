@@ -2,6 +2,7 @@
 
 namespace LiveMapEngine;
 
+use LiveMapEngine\SVGParser\Entity\ImageInfo;
 use SimpleXMLElement;
 use stdClass;
 
@@ -37,7 +38,7 @@ interface SVGParserInterface
      * @param int $index
      * @return array
      */
-    public function getImageInfo(int $index = 0): array;
+    public function getImageInfo(int $index = 0):array;
 
     /**
      * Парсит объекты на определенном слое (или по всему файлу)
