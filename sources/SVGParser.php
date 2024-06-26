@@ -15,8 +15,8 @@ use LiveMapEngine\SVGParser\Entity\LayerElementsTranslation;
 #[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
 {
-    public const VERSION                        = 3.1;
-    public const GIT_VERSION                    = '0.9.9';
+    public const VERSION                        = 3.2;
+    public const GIT_VERSION                    = '1.0';
 
     /**
      * Constants for convert_SVGElement_to_Polygon()
@@ -186,6 +186,8 @@ class SVGParser implements SVGParserInterface
             }
 
             $this->layer_images_translation = new LayerElementsTranslation(0, 0);
+            $this->layer_elements_translation = new LayerElementsTranslation(0, 0);
+
             $this->crs_translation_options = new CRSTranslationOptions();
 
         } catch (Exception $e) {
