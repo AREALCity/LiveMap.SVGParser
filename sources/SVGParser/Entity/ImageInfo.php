@@ -7,16 +7,40 @@ namespace LiveMapEngine\SVGParser\Entity;
  */
 class ImageInfo
 {
-    public float $width;
-    public float $height;
-    public float $ox;
-    public float $oy;
-    public string $xhref;
-
     /**
      * @var bool
      */
     public bool $is_present;
+
+    /**
+     * @var float WIDTH
+     */
+    public float $width;
+
+    /**
+     * @var float HEIGHT
+     */
+    public float $height;
+
+    /**
+     * @var float OFFSET X
+     */
+    public float $ox;
+
+    /**
+     * @var float OFFSET Y
+     */
+    public float $oy;
+
+    /**
+     * @var string
+     */
+    public string $xhref;
+
+    /**
+     * @var float
+     */
+    public float $precision;
 
     public function __construct($width = 0, $height = 0, $ox = 0, $oy = 0, $xhref = '', $precision = 4, $is_present = false)
     {

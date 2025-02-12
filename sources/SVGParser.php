@@ -11,6 +11,7 @@ use Arris\Toolkit\XMLNavigator\Convertation\FastXmlToArray;
 
 use LiveMapEngine\SVGParser\Entity\CRSTranslationOptions;
 use LiveMapEngine\SVGParser\Entity\LayerElementsTranslation;
+use LiveMapEngine\SVGParser\Entity\ImageInfo;
 
 #[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
@@ -294,13 +295,11 @@ class SVGParser implements SVGParserInterface
 
     /**
      * @inheritDoc
-     *
-    //@todo: return LiveMapEngine\SVGParser\Entity\ImageInfo -- но что возвращать, если изображения нет?
-     * В классе нужно заводить поле is_present и его проверять, что усложняет
-     *
      */
-    public function getImageInfo(int $index = 0):array
+    public function getImageInfo(int $index = 0):ImageInfo
     {
+        $i = new ImageInfo(is_present: false);
+
         if (\array_key_exists($index, $this->layer_images)) {
             /**
              * @var SimpleXMLElement $an_image
@@ -313,36 +312,25 @@ class SVGParser implements SVGParserInterface
             // (float)$an_image->attributes()->{'x'} ?? ( 0 + (float)$this->layer_images_translation['ox'] ?? 0  )
             // то есть у ?? приоритет меньше чем у +
 
-            $an_image_offset_x = (float)$an_image->attributes()->{'x'} ?? 0;
-            $an_image_offset_y = (float)$an_image->attributes()->{'y'} ?? 0;
-
             $an_image_width = (float)$an_image->attributes()->{'width'} ?? 0;
             $an_image_height = (float)$an_image->attributes()->{'height'} ?? 0;
+
+            $an_image_offset_x = (float)$an_image->attributes()->{'x'} ?? 0;
+            $an_image_offset_y = (float)$an_image->attributes()->{'y'} ?? 0;
 
             $an_image_translate_x = (float)$this->layer_images_translation->{'ox'} ?? 0;
             $an_image_translate_y = (float)$this->layer_images_translation->{'oy'} ?? 0;
 
-            /*return new ImageInfo(
-                $an_image_width,
-                $an_image_height,
-                $an_image_offset_x + $an_image_translate_x,
-                $an_image_offset_y + $an_image_translate_y,
-                ($an_image->attributes('xlink', true)->{'href'} ?? ''),
-                \round($an_image_width, $this->ROUND_PRECISION,
-                true)
-            );*/
-
-            return [
-                'width'     =>  \round($an_image_width, $this->ROUND_PRECISION),
-                'height'    =>  \round($an_image_height, $this->ROUND_PRECISION),
-                'ox'        =>  \round($an_image_offset_x + $an_image_translate_x, $this->ROUND_PRECISION),
-                'oy'        =>  \round($an_image_offset_y + $an_image_translate_y, $this->ROUND_PRECISION),
-                'xhref'     =>  (string)($an_image->attributes('xlink', true)->{'href'} ?? '')
-            ];
+            $i->width = $an_image_width;
+            $i->height = $an_image_height;
+            $i->ox = $an_image_offset_x + $an_image_translate_x;
+            $i->oy = $an_image_offset_y + $an_image_translate_y;
+            $i->xhref = $an_image->attributes('xlink', true)->{'href'} ?? '';
+            $i->precision = \round($an_image_width, $this->ROUND_PRECISION);
+            $i->is_present = true;
         }
 
-        // return new ImageInfo(is_present: false);
-        return [];
+        return $i;
     }
 
     /**
@@ -929,7 +917,7 @@ class SVGParser implements SVGParserInterface
      * @param $subpolygon
      * @return array|array[]
      */
-    private function convert_to_SimpleCRS_subpolygon( $subpolygon )
+    private function convert_to_SimpleCRS_subpolygon( $subpolygon ): array
     {
         return \array_map( function($knot) {
             return $this->convert_to_SimpleCRS_knot( $knot );
@@ -940,7 +928,7 @@ class SVGParser implements SVGParserInterface
      * @param $knot
      * @return array
      */
-    private function convert_to_SimpleCRS_knot( $knot )
+    private function convert_to_SimpleCRS_knot( $knot ): array
     {
         $ox = 0;
         $oy = 0;
@@ -992,7 +980,7 @@ class SVGParser implements SVGParserInterface
      * @param $subpolyline
      * @return array
      */
-    private function translate_subpolygon_from_XY_to_CRS( $subpolyline )
+    private function translate_subpolygon_from_XY_to_CRS( $subpolyline ): array
     {
         return \array_map( function($knot) {
             return $this->translate_knot_from_XY_to_CRS( $knot );
@@ -1038,7 +1026,7 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Polygon( $element )
+    private function convert_SVGElement_to_Polygon( $element ): array
     {
         // @var SimpleXMLElement $element
         $path     = (string)$element->attributes()->{'d'};    // получаем значение атрибута <path d="">
@@ -1438,7 +1426,7 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Circle( $element )
+    private function convert_SVGElement_to_Circle( $element ): array
     {
         return [
             'x' =>  (string)$element->attributes()->{'cx'} ?? 0,
@@ -1450,7 +1438,7 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Rect($element)
+    private function convert_SVGElement_to_Rect($element): array
     {
         $x = $element->attributes()->{'x'} ?? 0;
         $y = $element->attributes()->{'y'} ?? 0;
@@ -1475,7 +1463,7 @@ class SVGParser implements SVGParserInterface
      * @param $multicoords
      * @return array|string
      */
-    private function convert_CRS_to_JSString( $multicoords )
+    private function convert_CRS_to_JSString( $multicoords ): array|string
     {
         if (empty($multicoords)) {
             return '[]';
@@ -1499,7 +1487,7 @@ class SVGParser implements SVGParserInterface
      * @param $knot
      * @return string
      */
-    private function convert_knotCRS_to_JSstring ( $knot )
+    private function convert_knotCRS_to_JSstring ( $knot ): string
     {
         return '[' . \implode(',', [ $knot['x'], $knot['y'] ]) . ']';
     }
@@ -1510,7 +1498,7 @@ class SVGParser implements SVGParserInterface
      * @param $coords
      * @return string
      */
-    private function convert_subCRS_to_JSstring( $coords )
+    private function convert_subCRS_to_JSstring( $coords ): string
     {
         $js_coords_string = [];
 

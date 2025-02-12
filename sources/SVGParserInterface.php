@@ -33,12 +33,12 @@ interface SVGParserInterface
     public function getImagesCount(): int;
 
     /**
-     * Возвращает информацию об изображении с переданным индексом
+     * Возвращает информацию об изображении с переданным индексом как структуру ImageInfo
      *
      * @param int $index
-     * @return array
+     * @return ImageInfo
      */
-    public function getImageInfo(int $index = 0):array;
+    public function getImageInfo(int $index = 0):ImageInfo;
 
     /**
      * Парсит объекты на определенном слое (или по всему файлу)
