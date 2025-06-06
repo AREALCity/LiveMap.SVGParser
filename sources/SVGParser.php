@@ -752,7 +752,8 @@ class SVGParser implements SVGParserInterface
         foreach ($this->layer_elements->{'path'} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
             $element    = $this->parseAloneElement($path, 'path');
-            if ($element) {
+
+            if ($element['valid']) {
                 $all_paths[ $path_id ] = $element;
             }
         }
@@ -760,7 +761,7 @@ class SVGParser implements SVGParserInterface
         foreach ($this->layer_elements->{'rect'} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
             $element    = $this->parseAloneElement($path, 'rect');
-            if ($element) {
+            if ($element['valid']) {
                 $all_paths[ $path_id ] = $element;
             }
         }
@@ -768,7 +769,7 @@ class SVGParser implements SVGParserInterface
         foreach ($this->layer_elements->{'circle'} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
             $element    = $this->parseAloneElement($path, 'circle');
-            if ($element) {
+            if ($element['valid']) {
                 $all_paths[ $path_id ] = $element;
             }
         }
@@ -776,7 +777,7 @@ class SVGParser implements SVGParserInterface
         foreach ($this->layer_elements->{'ellipse'} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
             $element    = $this->parseAloneElement($path, 'ellipse');
-            if ($element) {
+            if ($element['valid']) {
                 $all_paths[ $path_id ] = $element;
             }
         }
