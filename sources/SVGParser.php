@@ -1176,6 +1176,7 @@ class SVGParser implements SVGParserInterface
 
                     // Если это неправильная комбинация float-чисел - пропускаем обработку и идем на след. итерацию
                     if ($matches_count == 0) {
+                        $this->logger->debug("... которая не содержит [float,float], пропускаем итерацию");
                         continue;
                     }
                     // здесь я использую такую конструкцию чтобы не брать стену кода в IfTE-блок.
@@ -1238,11 +1239,18 @@ class SVGParser implements SVGParserInterface
                     $pattern = '#(?<X>\-?\d+(\.\d+)?)#';
                     $matches_count = \preg_match($pattern, $fragment, $knot);
 
+                    if ($matches_count == 0) {
+                        $this->logger->debug("... но определение координат не [float], пропускаем итерацию");
+                        continue;
+                    }
+
                     if ($matches_count > 0) {
                         $xy = array(
                             'x' =>  $knot['X'],
                             'y' =>  $prev_knot_y
                         );
+
+                        $this->logger->debug("XY: ", [ $xy ]);
 
                         $polygon[] = $xy;
 
@@ -1266,6 +1274,8 @@ class SVGParser implements SVGParserInterface
                             'y' =>  (float)$prev_knot_y
                         );
 
+                        $this->logger->debug("XY: ", [ $xy ]);
+
                         $polygon[] = $xy;
 
                         $prev_knot_x = $xy['x'];
@@ -1287,6 +1297,8 @@ class SVGParser implements SVGParserInterface
                             'x' =>  $prev_knot_x,
                             'y' =>  $knot['Y']
                         );
+
+                        $this->logger->debug("XY: ", [ $xy ]);
 
                         $polygon[] = $xy;
 
@@ -1314,9 +1326,9 @@ class SVGParser implements SVGParserInterface
 
                         $prev_knot_x = $xy['x'];
                         $prev_knot_y = $xy['y'];
+
+                        $this->logger->debug("XY: ", [ $xy ]);
                     }
-
-
                 } // ($LOOKAHEAD_FLAG == SVGPATH_VERTICAL_RELATIVE)
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_ABS) {
@@ -1336,6 +1348,8 @@ class SVGParser implements SVGParserInterface
 
                         $prev_knot_x = $xy['x'];
                         $prev_knot_y = $xy['y'];
+
+                        $this->logger->debug("XY: ", [ $xy ]);
                     }
 
                 } // ($LOOKAHEAD_FLAG == SVGPATH_LINETO_ABSOLUTE)
@@ -1357,10 +1371,11 @@ class SVGParser implements SVGParserInterface
 
                         $prev_knot_x = $xy['x'];
                         $prev_knot_y = $xy['y'];
+
+                        $this->logger->debug("XY: ", [ $xy ]);
                     }
                 } // ($LOOKAHEAD_FLAG == SVGPATH_LINETO_ABSOLUTE)
 
-                $this->logger->debug("XY: ", [ $xy ]);
             } // endif (нет, это не управляющая последовательность)
 
         } while (!empty($path_fragments));
