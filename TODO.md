@@ -1,3 +1,15 @@
+# Быстрая проверка на число
+
+```php
+$pattern = '#(?<Y>\-?\d+(\.\d+)?)#';
+$matches_count = \preg_match($pattern, $fragment, $knot);
+```
+
+нс предлагает 
+```php
+filter_var($fragment, FILTER_VALIDATE_FLOAT) !== false)
+```
+
 # Эллипс
 
 Искаропки leaflet рисовать эллипс не умеет, поэтому SVG-path типа эллипс приводится к окружности.

@@ -42,7 +42,7 @@ class ImageInfo
      */
     public float $precision;
 
-    public function __construct($width = 0, $height = 0, $ox = 0, $oy = 0, $xhref = '', $precision = 4, $is_present = false)
+    public function __construct($width = 0, $height = 0, $ox = 0, $oy = 0, string $xhref = '', int $precision = 4, bool $is_present = false)
     {
         $this->is_present = $is_present;
 

@@ -3,6 +3,7 @@
 namespace LiveMapEngine;
 
 use LiveMapEngine\SVGParser\Entity\ImageInfo;
+use Psr\Log\LoggerInterface;
 use SimpleXMLElement;
 use stdClass;
 
@@ -14,7 +15,7 @@ interface SVGParserInterface
      * @param $svg_file_content
      * @param array $options
      */
-    public function __construct( $svg_file_content, array $options = [] );
+    public function __construct( $svg_file_content, array $options = [], LoggerInterface $logger = null );
 
     /**
      * Парсит информацию об изображениях. Передается имя слоя (в противном случае изображения ищутся по всей SVG)

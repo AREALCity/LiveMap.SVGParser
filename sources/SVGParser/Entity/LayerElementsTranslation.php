@@ -7,18 +7,18 @@ class LayerElementsTranslation
     /**
      * @var float
      */
-    public $ox;
+    public float $ox;
 
     /**
      * @var int|float
      */
-    public $oy;
+    public float $oy;
 
     /**
-     * @param $ox
-     * @param $oy
+     * @param float $ox
+     * @param float $oy
      */
-    public function __construct($ox = 0, $oy = 0)
+    public function __construct(float $ox = 0, float $oy = 0)
     {
         $this->ox = $ox;
         $this->oy = $oy;

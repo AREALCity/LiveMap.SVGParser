@@ -2,6 +2,8 @@
 
 namespace LiveMapEngine;
 
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use stdClass;
 use Exception;
 use SimpleXMLElement;
@@ -16,8 +18,8 @@ use LiveMapEngine\SVGParser\Entity\ImageInfo;
 #[\AllowDynamicProperties]
 class SVGParser implements SVGParserInterface
 {
-    public const VERSION                        = 3.2;
-    public const GIT_VERSION                    = '1.0';
+    public const VERSION                        = 4.0;
+    public const GIT_VERSION                    = '1.2.0';
 
     /**
      * Constants for convert_SVGElement_to_Polygon()
@@ -144,34 +146,34 @@ class SVGParser implements SVGParserInterface
      */
     private bool $OPTION_ALLOW_EMPTY_ELEMENTS = false;
 
+    private LoggerInterface $logger;
 
     /**
      * @inheritDoc
      */
-    public function __construct($svg_file_content = '', array $options = [] )
+    public function __construct($svg_file_content = '', array $options = [], LoggerInterface $logger = null)
     {
         \libxml_use_internal_errors(true);
         $this->parser_state = new Result();
 
-        $this->OPTION_ALLOW_EMPTY_ELEMENTS
-            = array_key_exists('allowEmptyElements', $options)
-            ? (bool)$options['allowEmptyElements']
-            : false;
+        if (isset($options['allowEmptyElements'])) {
+            $this->OPTION_ALLOW_EMPTY_ELEMENTS = (bool)$options['allowEmptyElements'];
+        }
 
-        $this->PARSER_ALLOW_ELLIPSE
-            = array_key_exists('allowEllipse', $options)
-            ? (bool)$options['allowEllipse']
-            : false;
+        if (isset($options['allowEllipse'])) {
+            $this->PARSER_ALLOW_ELLIPSE = (bool)$options['allowEllipse'];
+        }
 
-        $this->ROUND_PRECISION
-            = array_key_exists('roundPrecision', $options)
-            ? (int)$options['roundPrecision']
-            : 4;
+        if (isset($options['roundPrecision'])) {
+            $this->ROUND_PRECISION = (int)$options['roundPrecision'];
+        }
 
-        $registerNamespaces
-            = array_key_exists('registerNamespaces', $options)
-            ? (bool)$options['registerNamespaces']
-            : true;
+        $registerNamespaces = true;
+        if (isset($options['registerNamespaces'])) {
+            $registerNamespaces = (bool)$options['registerNamespaces'];
+        }
+
+        $this->logger = is_null($logger) ? new NullLogger() : $logger;
 
         try {
             if (empty($svg_file_content)) {
@@ -204,7 +206,9 @@ class SVGParser implements SVGParserInterface
      */
     public function parseImages( $layer_name ):bool
     {
-        if ($layer_name !== '') {
+        if ($layer_name === '') {
+            $xpath_images = '//svg:image';
+        } else {
             $xpath_images_layer_attrs = '//svg:g[starts-with(@inkscape:label, "' . $layer_name . '")]';
 
             // @var SimpleXMLElement $images_layer_attrs
@@ -222,13 +226,11 @@ class SVGParser implements SVGParserInterface
 
             // анализируем атрибут transform="translate(?,?)"
             if (!empty($images_layer_attrs->attributes()->{'transform'})) {
-                $this->layer_images_translation = $this->parseTransform( $images_layer_attrs->attributes()->{'transform'} );
+                $this->layer_images_translation = $this->parseTransform($images_layer_attrs->attributes()->{'transform'});
             }
 
-            $xpath_images   = '//svg:g[starts-with(@inkscape:label, "' . $layer_name . '")]/svg:image';
+            $xpath_images = '//svg:g[starts-with(@inkscape:label, "' . $layer_name . '")]/svg:image';
 
-        } else {
-            $xpath_images   = '//svg:image';
         }
 
         $this->layer_images = $this->svg->xpath($xpath_images);
@@ -241,7 +243,7 @@ class SVGParser implements SVGParserInterface
      */
     public function getImagesCount(): int
     {
-        return \count($this->layer_images);
+        return is_array($this->layer_images) ? count($this->layer_images) : 0;
     }
 
     /**
@@ -255,22 +257,18 @@ class SVGParser implements SVGParserInterface
      */
     private function parseTransform($transform_definition): LayerElementsTranslation
     {
-        $default = new LayerElementsTranslation(0, 0);
-
         if (empty($transform_definition)) {
-            return $default;
+            return new LayerElementsTranslation(0, 0);
         }
 
-        if (1 == \preg_match('/translate\(\s*([^\s,)]+)[\s,]([^\s,)]+)/', $transform_definition, $translate_matches)) {
-            if (count($translate_matches) > 2) {
-                return new LayerElementsTranslation(
-                    (float)$translate_matches[1],
-                    (float)$translate_matches[2]
-                );
-            }
+        if (preg_match('/translate\(\s*([^\s,)]+)[\s,]([^\s,)]+)/', $transform_definition, $matches) && count($matches) > 2) {
+            return new LayerElementsTranslation(
+                (float)$matches[1],
+                (float)$matches[2]
+            );
         }
 
-        return $default;
+        return new LayerElementsTranslation(0, 0);
     }
 
     /**
@@ -300,33 +298,42 @@ class SVGParser implements SVGParserInterface
     {
         $i = new ImageInfo(is_present: false);
 
-        if (\array_key_exists($index, $this->layer_images)) {
+        if (
+            is_array($this->layer_images) &&
+            array_key_exists($index, $this->layer_images)
+        ) {
             /**
              * @var SimpleXMLElement $an_image
              */
             $an_image = $this->layer_images[ $index ];
+            $attrs = $an_image->attributes();
 
-            // выносим в переменные, иначе может случится херня:
-            // (float)$an_image->attributes()->{'x'} ?? 0 + (float)$this->layer_images_translation['ox'] ?? 0 ;
-            // трактуется как
-            // (float)$an_image->attributes()->{'x'} ?? ( 0 + (float)$this->layer_images_translation['ox'] ?? 0  )
-            // то есть у ?? приоритет меньше чем у +
+            $i->width = (float)$attrs->{'width'} ?? 0;
+            $i->height = (float)$attrs->{'height'} ?? 0;
 
-            $an_image_width = (float)$an_image->attributes()->{'width'} ?? 0;
-            $an_image_height = (float)$an_image->attributes()->{'height'} ?? 0;
-
-            $an_image_offset_x = (float)$an_image->attributes()->{'x'} ?? 0;
-            $an_image_offset_y = (float)$an_image->attributes()->{'y'} ?? 0;
+            $an_image_offset_x = (float)$attrs->{'x'} ?? 0;
+            $an_image_offset_y = (float)$attrs->{'y'} ?? 0;
 
             $an_image_translate_x = (float)$this->layer_images_translation->{'ox'} ?? 0;
             $an_image_translate_y = (float)$this->layer_images_translation->{'oy'} ?? 0;
 
-            $i->width = $an_image_width;
-            $i->height = $an_image_height;
+            /**
+             * Выносили в переменные, иначе может случится херня:
+             *
+             * $a ?? 0 + $b ?? 0 ;
+             *
+             * трактуется как
+             *
+             * $a ?? ( 0 + $b ?? 0  )
+             *
+             * то есть у ?? приоритет меньше чем у +
+             */
             $i->ox = $an_image_offset_x + $an_image_translate_x;
             $i->oy = $an_image_offset_y + $an_image_translate_y;
+
             $i->xhref = $an_image->attributes('xlink', true)->{'href'} ?? '';
-            $i->precision = \round($an_image_width, $this->ROUND_PRECISION);
+
+            $i->precision = \round($i->width, $this->ROUND_PRECISION);
             $i->is_present = true;
         }
 
@@ -380,7 +387,7 @@ class SVGParser implements SVGParserInterface
      */
     public function set_CRSSimple_TranslateOptions($ox = null , $oy = null, $image_height = null)
     {
-        if (!( \is_null($ox) || \is_null($oy) || \is_null($image_height))) {
+        if ($ox !== null && $oy !== null && $image_height !== null) {
             $this->crs_translation_options = new CRSTranslationOptions($ox, $oy, $image_height);
         }
     }
@@ -394,7 +401,16 @@ class SVGParser implements SVGParserInterface
      */
     public function parseAloneElement(SimpleXMLElement $element, string $type): array
     {
-        $data = [];   // блок данных о пути
+        // блок данных о пути
+        $data = [
+            'valid'         =>  true,
+            'id'            =>  (string)$element->attributes()->{'id'},
+            'type'          =>  $type,
+            'layer'         =>  $this->layer_name,
+            'coords'        =>  [],
+            'interactive'   =>  [],
+            'js'            =>  ''
+        ];
 
         $path_d     = (string)$element->attributes()->{'d'};
         $path_id    = (string)$element->attributes()->{'id'};
@@ -409,8 +425,7 @@ class SVGParser implements SVGParserInterface
             $type = "marker";
         }
 
-        $data['id'] = $path_id;
-        $data['label'] = $element_attributes["inkscape:label"] ?? $path_id;
+        $data['label'] = $element_attributes["inkscape:label"] ?? $data['id'];
 
         // если это фигура типа ellipse И парсеру не разрешено распознавать ellipse,
         // то трактуем фигуру как окружность с приведением к эллипсу
@@ -429,8 +444,7 @@ class SVGParser implements SVGParserInterface
                     'x'     =>  $element_attributes['sodipodi:cx'],
                     'y'     =>  $element_attributes['sodipodi:cy'],
                 ];
-                $coords = $this->translate_knot_from_XY_to_CRS( $coords );
-                $data['coords'] = $coords;
+                $data['coords'] = $this->translate_knot_from_XY_to_CRS( $coords );
 
                 $data['js'] = $this->convert_knotCRS_to_JSstring( $data['coords'] );
 
@@ -443,16 +457,16 @@ class SVGParser implements SVGParserInterface
                 $data['type'] = 'polygon';
 
                 // SVG Path -> Polygon
-                $coords = $this->convert_SVGElement_to_Polygon( $element );
-                if (!$coords) {
-                    return [];
+                $data['coords'] = $this->convert_SVGElement_to_Polygon( $element );
+
+                if (empty($data['coords'])) {
+                    $data['valid'] = false;
+                    break;
                 }
 
                 // сдвиг координат и преобразование в CRS-модель
-                $coords = $this->translate_polygon_from_XY_to_CRS( $coords );
+                $data['coords'] = $this->translate_polygon_from_XY_to_CRS( $data['coords'] );
 
-                // convert_to_JS_style
-                $data['coords'] = $coords;
                 $data['js'] = $this->convert_CRS_to_JSString( $data['coords'] );
 
                 break;
@@ -466,19 +480,16 @@ class SVGParser implements SVGParserInterface
                 $data['radius'] = \round((float)$r, $this->ROUND_PRECISION);
 
                 if ($data['radius'] == 0) {
-                    return [];
+                    $data['valid'] = false;
+                    break;
                 }
 
                 // SVG Path -> Polygon
-                $coords = $this->convert_SVGElement_to_Circle( $element );
-                if (!$coords) {
-                    return [];
-                }
+                $data['coords'] = $this->convert_SVGElement_to_Circle( $element );
 
                 // сдвиг координат и преобразование в CRS-модель
-                $coords = $this->translate_knot_from_XY_to_CRS( $coords );
+                $data['coords'] = $this->translate_knot_from_XY_to_CRS( $data['coords'] );
 
-                $data['coords'] = $coords;
                 $data['js'] = $this->convert_knotCRS_to_JSstring( $data['coords'] );
 
                 break;
@@ -489,9 +500,6 @@ class SVGParser implements SVGParserInterface
                 // x, y
                 $data['type'] = 'rect';
                 $coords = $this->convert_SVGElement_to_Rect( $element );
-                if (empty($coords)) {
-                    return [];
-                }
 
                 $data['coords'][] = [
                     $this->translate_knot_from_XY_to_CRS( $coords[0] ),
@@ -513,9 +521,6 @@ class SVGParser implements SVGParserInterface
 
                 // SVG Element to coords
                 $coords = $this->convert_SVGElement_to_Circle( $element );
-                if (empty($coords)) {
-                    return [];
-                }
 
                 // сдвиг координат и преобразрвание в CRS-модель
                 $coords = $this->translate_knot_from_XY_to_CRS( $coords );
@@ -550,7 +555,7 @@ class SVGParser implements SVGParserInterface
                 $transform = $element->attributes()->{'transform'} ?? '';
                 $rotate = $this->parseTransformRotate($transform);
 
-                // сдвиг координат и преобразрвание в CRS-модель
+                // сдвиг координат и преобразование в CRS-модель
                 $center = $this->translate_knot_from_XY_to_CRS( $center );
                 $data['coords'] = $center;
 
@@ -568,103 +573,19 @@ class SVGParser implements SVGParserInterface
         }
 
         // получем информацию об атрибутах региона из SVG-разметки
+        $this->parseStyleAttributes($data, $path_style);
 
-        // получаем атрибут fillColor
-        if (\preg_match('#fill:([\#\d\w]{7})#', $path_style, $path_style_fillColor) ) {
-            $data['fillColor'] = $path_style_fillColor[1];
-        } else {
-            $data['fillColor'] = null;
-        };
+        // Parse titles and descriptions
+        $this->parseTitlesAndDescriptions($data, $element);
 
-        // получаем атрибут fillOpacity
-        if (\preg_match('#fill-opacity:([\d]?\.[\d]{0,8})#', $path_style, $path_style_fillOpacity) ) {
-            $data['fillOpacity'] = round($path_style_fillOpacity[1] , $this->ROUND_PRECISION);
-        } else {
-            $data['fillOpacity'] = null;
-        };
+        // Parse interactive attributes
+        $this->parseInteractiveAttributes($data, $element_attributes);
 
-        // получаем атрибут fillRule
-        if (\preg_match('#fill-rule:(evenodd|nonzero)#', $path_style, $path_style_fillRule) ) {
-            if ($path_style_fillRule[1] !== 'evenodd') {
-                $data['fillRule'] = $path_style_fillRule[1];
-            }
-        } else {
-            $data['fillRule'] = null;
-        };
+        return $data;
+    } // parseAloneElement
 
-        // кастомные значения для пустых регионов
-        if ($this->layer_elements_config) {
-            if (
-                self::property_exists_recursive($this->layer_elements_config, 'empty->fill')
-                && $this->layer_elements_config->empty->fill == 1
-            ) {
-                if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillColor')
-                    && $this->layer_elements_config->empty->fillColor
-                    && !$data['fillColor']
-                ) {
-                    $data['fillColor'] = $this->layer_elements_config->empty->fillColor;
-                }
-
-                if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->fillOpacity')
-                    && $this->layer_elements_config->empty->fillOpacity
-                    && !$data['fillOpacity']
-                ) {
-                    $data['fillOpacity'] = $this->layer_elements_config->empty->fillOpacity;
-                }
-            } // if ... $this->layer_elements_config->empty->fill == 1)
-
-            if (
-                self::property_exists_recursive($this->layer_elements_config, 'empty->stroke')
-                && $this->layer_elements_config->empty->stroke
-                && $this->layer_elements_config->empty->stroke == 1
-            ) {
-
-                if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderColor')
-                    && $this->layer_elements_config->empty->borderColor
-                    && $data['borderColor']
-                ) {
-                    $data['borderColor'] = $this->layer_elements_config->empty->borderColor;
-                }
-
-                if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderWidth')
-                    && $this->layer_elements_config->empty->borderWidth
-                    && $data['borderWidth']
-                ) {
-                    $data['borderWidth'] = $this->layer_elements_config->empty->borderWidth;
-                }
-
-                if (
-                    self::property_exists_recursive($this->layer_elements_config, 'empty->borderOpacity')
-                    && $this->layer_elements_config->empty->borderOpacity
-                    && $data['borderOpacity']
-                ) {
-                    $data['borderOpacity'] = $this->layer_elements_config->empty->borderOpacity;
-                }
-
-            } // if ... $this->layer_elements_config->empty->stroke == 1)
-
-        } // if ($this->layer_elements_config)
-
-        // получаем title узла
-        $path_title = (string)$element->{'title'}[0];
-        if ($path_title) {
-            $data['title'] = \htmlspecialchars($path_title, ENT_QUOTES | ENT_HTML5);
-        }
-
-        // получаем description узла
-        $path_desc = (string)$element->{'desc'}[0];
-        if ($path_desc) {
-            $data['desc'] = \htmlspecialchars($path_desc, ENT_QUOTES | ENT_HTML5);
-        }
-
-        $data['layer'] = $this->layer_name;
-
-        // get interactive values
-        $data['interactive'] = [];
+    private function parseInteractiveAttributes(array &$data, array $element_attributes):void
+    {
         $possible_interactive_fields = [
             'onclick',
             'onmouseover',
@@ -675,17 +596,114 @@ class SVGParser implements SVGParserInterface
             'onfocusout',
             'onload'
         ];
+
         foreach (
-            $possible_interactive_fields as $interactive_field) {
+            $possible_interactive_fields as $field) {
+            if (isset($element_attributes[$field])) {
+                $data['interactive'][$field] = $element_attributes[$field];
+            }
+        }
+    }
+
+    /**
+     * Парсим атрибуты стилей для элемента
+     *
+     * @param array $data
+     * @param string $style
+     * @return void
+     */
+    private function parseStyleAttributes(array &$data, string $style): void
+    {
+        // Parse fill color
+        if (preg_match('#fill:([\#\d\w]{7})#', $style, $matches)) {
+            $data['fillColor'] = $matches[1];
+        }
+
+        // Parse fill opacity
+        if (preg_match('#fill-opacity:([\d]?\.[\d]{0,8})#', $style, $matches)) {
+            $data['fillOpacity'] = round($matches[1], $this->ROUND_PRECISION);
+        }
+
+        // Parse fill rule
+        if (preg_match('#fill-rule:(evenodd|nonzero)#', $style, $matches) && $matches[1] !== 'evenodd') {
+            $data['fillRule'] = $matches[1];
+        }
+
+        // // кастомные значения для пустых регионов
+        if ($this->layer_elements_config) {
+            $this->applyDefaultEmptyStyles($data);
+        }
+    }
+
+    /**
+     * Apply default empty element styles if configured
+     *
+     * @param array $data
+     * @return void
+     */
+    private function applyDefaultEmptyStyles(array &$data): void
+    {
+        if (
+            self::property_exists_recursive($this->layer_elements_config, 'empty->fill') &&
+            $this->layer_elements_config->empty->fill == 1
+        ) {
+
             if (
-                \array_key_exists($interactive_field, $element_attributes)
+                self::property_exists_recursive($this->layer_elements_config, 'empty->fillColor') &&
+                $this->layer_elements_config->empty->fillColor &&
+                !isset($data['fillColor'])
             ) {
-                $data['interactive'][ $interactive_field ] = $element_attributes[$interactive_field];
+                $data['fillColor'] = $this->layer_elements_config->empty->fillColor;
+            }
+
+            if (
+                self::property_exists_recursive($this->layer_elements_config, 'empty->fillOpacity') &&
+                $this->layer_elements_config->empty->fillOpacity &&
+                !isset($data['fillOpacity'])
+            ) {
+                $data['fillOpacity'] = $this->layer_elements_config->empty->fillOpacity;
             }
         }
 
-        return $data;
-    } // parseAloneElement
+        if (self::property_exists_recursive($this->layer_elements_config, 'empty->stroke') &&
+            $this->layer_elements_config->empty->stroke == 1) {
+
+            if (
+                self::property_exists_recursive($this->layer_elements_config, 'empty->borderColor') &&
+                $this->layer_elements_config->empty->borderColor &&
+                isset($data['borderColor'])
+            ) {
+                $data['borderColor'] = $this->layer_elements_config->empty->borderColor;
+            }
+
+            if (
+                self::property_exists_recursive($this->layer_elements_config, 'empty->borderWidth') &&
+                $this->layer_elements_config->empty->borderWidth &&
+                isset($data['borderWidth'])
+            ) {
+                $data['borderWidth'] = $this->layer_elements_config->empty->borderWidth;
+            }
+
+            if (
+                self::property_exists_recursive($this->layer_elements_config, 'empty->borderOpacity') &&
+                $this->layer_elements_config->empty->borderOpacity &&
+                isset($data['borderOpacity'])
+            ) {
+                $data['borderOpacity'] = $this->layer_elements_config->empty->borderOpacity;
+            }
+        }
+    }
+
+    private function parseTitlesAndDescriptions(array &$data, SimpleXMLElement $element): void
+    {
+        if (isset($element->{'title'}[0])) {
+            $data['title'] = htmlspecialchars((string)$element->{'title'}[0], ENT_QUOTES | ENT_HTML5);
+        }
+
+        if (isset($element->{'desc'}[0])) {
+            $data['desc'] = htmlspecialchars((string)$element->{'desc'}[0], ENT_QUOTES | ENT_HTML5);
+        }
+    }
 
     /**
      * Получаем элементы по типу (rect, circle, path)
@@ -693,24 +711,27 @@ class SVGParser implements SVGParserInterface
      * @param $type
      * @return array
      */
-    public function getElementsByType($type)
+    public function getElementsByType($type): array
     {
         /** @var SimpleXMLElement $path */
         $all_paths = [];
+
+        if (!isset($this->layer_elements->{$type})) {
+            return $all_paths;
+        }
 
         foreach ($this->layer_elements->{$type} as $path) {
             $path_id    = (string)$path->attributes()->{'id'};
 
             $parsed_element = $this->parseAloneElement($path, $type);
+            $parsed_element_is_valid = $parsed_element['valid'];
+            unset($parsed_element['valid']);
 
-            /*if (!empty($parsed_element)) {
-                $all_paths[ $path_id ] = $parsed_element;
-            } else {
-                if ($this->OPTION_ALLOW_EMPTY_ELEMENTS) {
-                    $all_paths[ $path_id ] = $parsed_element;
-                }
-            }*/
-            $all_paths[ $path_id ] = $parsed_element;
+            if ($parsed_element_is_valid || $this->OPTION_ALLOW_EMPTY_ELEMENTS) {
+                $all_paths[$path_id] = $parsed_element;
+            }
+
+            // $all_paths[ $path_id ] = $parsed_element;
         }
 
         return $all_paths;
@@ -760,7 +781,6 @@ class SVGParser implements SVGParserInterface
             }
         }
 
-
         return $all_paths;
     }
 
@@ -770,77 +790,24 @@ class SVGParser implements SVGParserInterface
      * @param stdClass $options
      * @return void
      */
-    public function setLayerDefaultOptions(stdClass $options)
+    public function setLayerDefaultOptions(stdClass $options): void
     {
         $this->layer_elements_config = $options;
-    }
-
-
-    /**
-     * Получаем все элементы типа PATH
-     *
-     * НЕ ИСПОЛЬЗУЕТСЯ?
-     *
-     * @return array
-     */
-    private function getPaths()
-    {
-        return $this->getElementsByType('path');
-    }
-
-
-    /**
-     * Получаем все элементы типа RECTANGLE
-     *
-     * НЕ ИСПОЛЬЗУЕТСЯ?
-     *
-     * @return array
-     */
-    private function getRects()
-    {
-        return $this->getElementsByType('rect');
-    }
-
-    /**
-     * Получаем все элементы типа CIRCLE
-     *
-     * НЕ ИСПОЛЬЗУЕТСЯ?
-     *
-     * @return array
-     */
-    private function getCircles()
-    {
-        return $this->getElementsByType('circle');
-    }
-
-    /**
-     * Получаем все элементы типа ELLIPSE
-     *
-     * НЕ ИСПОЛЬЗУЕТСЯ?
-     *
-     * @return array
-     */
-    private function getEllipses()
-    {
-        return $this->getElementsByType('ellipse');
     }
 
     /**
      * Применяет трансформацию к узлу. Если не заданы опции трансформации - используются данные для трансформации слоя
      *
+     * Тоже не используется, поскольку не вызывается предок apply_transform_to_subpolygon()
+     *
      * @param $knot
-     * @param $options
+     * @param array $options - точно ли null|array ? Или класс?
      * @return array
      */
-    private function apply_transform_for_knot( $knot , $options = null)
+    private function apply_transform_for_knot($knot , array $options = []): array
     {
-        if ($options === null) {
-            $ox = $this->layer_elements_translation->ox;
-            $oy = $this->layer_elements_translation->oy;
-        } else {
-            $ox = $options['ox'];
-            $oy = $options['oy'];
-        }
+        $ox = $options['ox'] ?? $this->layer_elements_translation->ox;
+        $oy = $options['oy'] ?? $this->layer_elements_translation->oy;
 
         return [
             'x' =>  $knot['x'] + $ox,
@@ -850,15 +817,16 @@ class SVGParser implements SVGParserInterface
 
     /**
      * Применяет трансформацию к субполигону
+     * Реально не используется, поскольку не вызвается родитель apply_transform_to_polygon()
      *
      * @param $subpolyline
-     * @param $options
+     * @param array $options
      * @return array|array[]
      */
-    private function apply_transform_for_subpolygon( $subpolyline, $options = null)
+    private function apply_transform_to_subpolygon($subpolyline, array $options = []): array
     {
-        return \array_map( function($knot) use ($options) {
-            return $this->apply_transform_for_knot( $knot );
+        return array_map( function($knot) use ($options) {
+            return $this->apply_transform_for_knot( $knot, $options );
         }, $subpolyline);
     }
 
@@ -869,22 +837,20 @@ class SVGParser implements SVGParserInterface
      * @param $options
      * @return array|array[]|\array[][]
      */
-    private function apply_transform_for_polygon( $polygon, $options )
+    private function apply_transform_to_polygon( $polygon, array $options = []): array
     {
         if (empty($polygon)) {
             return array();
         }
 
         return
-            ( \count($polygon) > 1 )
-                ?
-                \array_map( function($subpoly) use ($options) {
-                    return $this->apply_transform_for_subpolygon($subpoly, $options);
-                }, $polygon )
-                :
-                array(
-                    $this->apply_transform_for_subpolygon( \array_shift($polygon), $options)
-                );
+            ( count($polygon) > 1 )
+                ? array_map( function($subpoly) use ($options) {
+                    return $this->apply_transform_to_subpolygon($subpoly, $options);
+                  }, $polygon )
+                : array(
+                    $this->apply_transform_to_subpolygon( array_shift($polygon), $options)
+                  );
     }
 
     /**
@@ -893,7 +859,7 @@ class SVGParser implements SVGParserInterface
      * @param $polygon
      * @return array|array[]|\array[][]
      */
-    private function convert_to_SimpleCRS_polygon( $polygon )
+    private function convert_to_SimpleCRS_polygon( $polygon ): array
     {
         if ( empty($polygon) ) {
             return array();
@@ -903,23 +869,25 @@ class SVGParser implements SVGParserInterface
             ( \count($polygon) > 1 )    // если суб-полигонов больше одного
                 ?
                 // проходим по всем
-                \array_map( function($subpath) {
+                array_map( function($subpath) {
                     return $this->convert_to_SimpleCRS_subpolygon( $subpath );
                 }, $polygon )
                 :
                 // иначе возвращаем первый элемент массива субполигонов, но как единственный элемент массива!
                 array(
-                    $this->convert_to_SimpleCRS_subpolygon( \array_shift($polygon) )
+                    $this->convert_to_SimpleCRS_subpolygon( array_shift($polygon) )
                 );
     }
 
     /**
+     * Не используется
+     *
      * @param $subpolygon
      * @return array|array[]
      */
     private function convert_to_SimpleCRS_subpolygon( $subpolygon ): array
     {
-        return \array_map( function($knot) {
+        return array_map( function($knot) {
             return $this->convert_to_SimpleCRS_knot( $knot );
         }, $subpolygon);
     }
@@ -982,7 +950,7 @@ class SVGParser implements SVGParserInterface
      */
     private function translate_subpolygon_from_XY_to_CRS( $subpolyline ): array
     {
-        return \array_map( function($knot) {
+        return array_map( function($knot) {
             return $this->translate_knot_from_XY_to_CRS( $knot );
         }, $subpolyline);
     }
@@ -1003,9 +971,9 @@ class SVGParser implements SVGParserInterface
         }
 
         return
-            ( \count($polygone) > 1 )    // если суб-полигонов больше одного
+            ( count($polygone) > 1 )    // если суб-полигонов больше одного
                 ?                           // проходим по всем
-                \array_map( function($subpath) {
+                array_map( function($subpath) {
                     return $this->translate_subpolygon_from_XY_to_CRS( $subpath );
                 }, $polygone )
                 : // возвращаем первый элемент массива субполигонов, но как единственный элемент массива!
@@ -1018,7 +986,7 @@ class SVGParser implements SVGParserInterface
     /**
      * Преобразует элемент типа POLYGON в массив координат полигона.
      *
-     * Возвращает массив пар координат ИЛИ false в случае невозможности преобразования.
+     * Возвращает массив пар координат ИЛИ [] в случае невозможности преобразования.
      * Невозможно преобразовать кривые Безье любого вида. В таком случае возвращается пустой массив.
      *
      * Эта функция не выполняет сдвиг или преобразование координат! У неё нет для этого данных.
@@ -1026,14 +994,13 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Polygon( $element ): array
+    private function convert_SVGElement_to_Polygon(SimpleXMLElement $element): array
     {
         // @var SimpleXMLElement $element
         $path     = (string)$element->attributes()->{'d'};    // получаем значение атрибута <path d="">
-        $path     = trim($path);                        // образаем начальные и конечные пробелы
+        $path     = trim($path);                        // обрезаем начальные и конечные пробелы
 
         $xy = [];
-        $is_debug = false;
 
         // пуст ли путь?
         if (empty($path)) {
@@ -1045,6 +1012,7 @@ class SVGParser implements SVGParserInterface
         if ( 'z' !== \strtolower(\substr($path, -1)) ) {
             return [];
         }
+
         /*
         Z. Z (or z, it doesn’t matter) “closes” the path. Like any other command, it’s optional.
         It’s a cheap n’ easy way to draw a straight line directly back to the last place the “pen”
@@ -1093,71 +1061,44 @@ class SVGParser implements SVGParserInterface
         do {
             $fragment = \array_splice($path_fragments, 0, 1)[0];
 
-            if ($is_debug) {
-                echo PHP_EOL, "Извлеченный фрагмент : ", $fragment, PHP_EOL;
-            }
+            $this->logger->debug("Извлеченный фрагмент : ", [ $fragment ]);
 
             if ( $fragment === 'Z') {
                 $fragment = 'z';
             }
 
             if ( \strpbrk($fragment, 'MmZzHhVvLl') ) {
-                switch ($fragment) {
-                    case 'M' : {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_MOVETO_ABS;
-                        break;
-                    }
-                    case 'm' : {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_MOVETO_REL;
-                        break;
-                    }
-                    case 'z': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_CLOSEPATH;
-                        break;
-                    }
-                    case 'h': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_HORIZONTAL_REL;
-                        break;
-                    }
-                    case 'H': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_HORIZONTAL_ABS;
-                        break;
-                    }
-                    case 'v': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_VERTICAL_REL;
-                        break;
-                    }
-                    case 'V': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_VERTICAL_ABS;
-                        break;
-                    }
-                    case 'l': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_REL;
-                        break;
-                    }
-                    case 'L': {
-                        $LOOKAHEAD_FLAG = self::PATHSEG_LINETO_ABS;
-                        break;
-                    }
-                } // switch
+                $LOOKAHEAD_FLAG = match ($fragment) {
+                    'M' => self::PATHSEG_MOVETO_ABS,
+                    'm' => self::PATHSEG_MOVETO_REL,
+                    'z' => self::PATHSEG_CLOSEPATH,
+                    'h' => self::PATHSEG_LINETO_HORIZONTAL_REL,
+                    'H' => self::PATHSEG_LINETO_HORIZONTAL_ABS,
+                    'v' => self::PATHSEG_LINETO_VERTICAL_REL,
+                    'V' => self::PATHSEG_LINETO_VERTICAL_ABS,
+                    'l' => self::PATHSEG_LINETO_REL,
+                    'L' => self::PATHSEG_LINETO_ABS,
+                };
 
                 // обработка управляющей последовательности Z
                 if ($LOOKAHEAD_FLAG === self::PATHSEG_CLOSEPATH) {
                     $multipolygon[] = $polygon; // добавляем суб-полигон к полигону
-                    $polygon = array();         // очищаем массив узлов суб-полигона
+                    $polygon = [];         // очищаем массив узлов суб-полигона
                 }
 
-                if ($is_debug) echo "Это управляющая последовательность. Параметры будут обработаны на следующей итерации.", PHP_EOL, PHP_EOL;
+                $this->logger->debug("Это управляющая последовательность. Параметры будут обработаны на следующей итерации.");
                 continue;
             } else {
-                if ($is_debug) echo "Это числовая последовательность, запускаем обработчик : ";
+                $this->logger->debug("Это числовая последовательность, запускаем обработчик : ");
 
                 /**
                  * Раньше этот блок данных обрабатывался внутри назначения обработчиков.
                  * Сейчас я его вынес наружу. Это может вызвать в перспективе некоторые глюки, нужны тесты
                  */
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_MOVETO_REL) {
-                    if ($is_debug) echo "m : Начало полилинии с относительными координатами ", PHP_EOL;
+
+                    $this->logger->debug("m : Начало поли-линии с относительными координатами ");
+
                     $polygon_is_relative = true;
 
                     //@todo: Подумать над ускорением преобразования (ЧИСЛО,ЧИСЛО)
@@ -1185,12 +1126,15 @@ class SVGParser implements SVGParserInterface
                     }
 
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
-                    if ($is_debug) var_dump($xy);
+
+                    $this->logger->debug("XY: ", [ $xy ]);
+
                     continue; // ОБЯЗАТЕЛЬНО делаем continue, иначе управление получит следующий блок
                 }
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_MOVETO_ABS) {
-                    if ($is_debug) echo "M : Начало полилинии с абсолютными координатами ", PHP_EOL;
+                    $this->logger->debug("M : Начало полилинии с абсолютными координатами ");
+
                     $polygon_is_relative = false;
 
                     //@todo: Подумать над ускорением преобразования (ЧИСЛО,ЧИСЛО)
@@ -1214,13 +1158,13 @@ class SVGParser implements SVGParserInterface
 
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
 
-                    if ($is_debug) var_dump($xy);
+                    $this->logger->debug("XY", [ $xy ]);
 
                     continue; // ОБЯЗАТЕЛЬНО делаем continue, иначе управление получит следующий блок
                 }
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_UNDEFINED || $LOOKAHEAD_FLAG == self::PATHSEG_REGULAR_KNOT ) {
-                    if ($is_debug) echo "Обычная числовая последовательность ", PHP_EOL;
+                    $this->logger->debug("Обычная числовая последовательность ");
 
                     // проверяем валидность пары координат
                     //@todo: Подумать над ускорением проверки (ЧИСЛО,ЧИСЛО)
@@ -1230,12 +1174,14 @@ class SVGParser implements SVGParserInterface
                     $matches_count = \preg_match($pattern, $fragment, $knot);
 
                     // Если это неправильная комбинация float-чисел - пропускаем обработку и идем на след. итерацию
-                    if ($matches_count == 0) continue;
+                    if ($matches_count == 0) {
+                        continue;
+                    }
                     // здесь я использую такую конструкцию чтобы не брать стену кода в IfTE-блок.
 
                     if (empty($polygon)) {
                         // возможно обработку первого узла следует перенести в другой блок (обработчик флага SVGPATH_START_ABSOULUTE или SVGPATH_START_RELATIVE)
-                        // var_dump('Это первый узел. Он всегда задается в абсолютных координатах! ');
+                        $this->logger->debug('Это первый узел. Он всегда задается в абсолютных координатах! ');
 
                         $xy = array(
                             'x' =>  (float)$prev_knot_x + (float)$knot['X'],
@@ -1247,10 +1193,10 @@ class SVGParser implements SVGParserInterface
                         $prev_knot_x = $xy['x'];
                         $prev_knot_y = $xy['y'];
                     } else {
-                        // var_dump('Это не первый узел в мультилинии');
+                        $this->logger->debug('Это не первый узел в мультилинии');
 
                         if ($polygon_is_relative) {
-                            // var_dump("его координаты относительные и даны относительно предыдущего узла полилинии ");
+                            $this->logger->debug("его координаты относительные и даны относительно предыдущего узла полилинии ");
 
                             $xy = array(
                                 'x' =>  (float)$prev_knot_x + (float)$knot['X'],
@@ -1263,7 +1209,7 @@ class SVGParser implements SVGParserInterface
                             $prev_knot_y = $xy['y'];
 
                         } else {
-                            // var_dump("Его координаты абсолютные");
+                            $this->logger->debug("Его координаты абсолютные");
 
                             $xy = array(
                                 'x' =>  $knot['X'],
@@ -1278,12 +1224,12 @@ class SVGParser implements SVGParserInterface
 
                         } // if()
                     } // endif (polygon)
-                    if ($is_debug) \var_dump($xy);
+                    $this->logger->debug("XY: ", [ $xy ]);
                     unset($xy);
                 } // if ($LOOKAHEAD_FLAG == SVGPATH_UNDEFINED || $LOOKAHEAD_FLAG == SVGPATH_NORMAL_KNOT )
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_HORIZONTAL_ABS) {
-                    if ($is_debug) echo "Горизонтальная линия по абсолютным координатам ", PHP_EOL;
+                    $this->logger->debug("Горизонтальная линия по абсолютным координатам ");
 
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
 
@@ -1305,7 +1251,8 @@ class SVGParser implements SVGParserInterface
                 }
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_HORIZONTAL_REL) {
-                    if ($is_debug) echo "Горизонтальная линия по относительным координатам ", PHP_EOL;
+                    $this->logger->debug("Горизонтальная линия по относительным координатам ");
+
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
 
                     //@todo: Подумать над ускорением проверки (ЧИСЛО)
@@ -1326,7 +1273,8 @@ class SVGParser implements SVGParserInterface
                 } // ($LOOKAHEAD_FLAG == SVGPATH_HORIZONTAL_RELATIVE)
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_VERTICAL_ABS) {
-                    if ($is_debug) echo "Вертикальная линия по абсолютным координатам ", PHP_EOL;
+                    $this->logger->debug("Вертикальная линия по абсолютным координатам ");
+
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
 
                     //@todo: Подумать над ускорением проверки (ЧИСЛО)
@@ -1347,7 +1295,8 @@ class SVGParser implements SVGParserInterface
                 } // ($LOOKAHEAD_FLAG == SVGPATH_VERTICAL_ABSOLUTE)
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_VERTICAL_REL) {
-                    if ($is_debug) echo "Вертикальная линия по относительным координатам ", PHP_EOL;
+                    $this->logger->debug("Вертикальная линия по относительным координатам ");
+
                     $LOOKAHEAD_FLAG = self::PATHSEG_UNDEFINED;
 
                     //@todo: Подумать над ускорением проверки (ЧИСЛО)
@@ -1370,7 +1319,7 @@ class SVGParser implements SVGParserInterface
                 } // ($LOOKAHEAD_FLAG == SVGPATH_VERTICAL_RELATIVE)
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_ABS) {
-                    if ($is_debug) echo "Линия по абсолютным координатам ", PHP_EOL;
+                    $this->logger->debug("Линия по абсолютным координатам ");
 
                     //@todo: Подумать над ускорением проверки (ЧИСЛО)
                     $pattern = '#(?<X>\-?\d+(\.\d+)?)\,(?<Y>\-?\d+(\.\d+)?)+#';
@@ -1391,7 +1340,7 @@ class SVGParser implements SVGParserInterface
                 } // ($LOOKAHEAD_FLAG == SVGPATH_LINETO_ABSOLUTE)
 
                 if ($LOOKAHEAD_FLAG == self::PATHSEG_LINETO_REL) {
-                    if ($is_debug) echo "Линия по относительным координатам ", PHP_EOL;
+                    $this->logger->debug("Линия по относительным координатам ");
 
                     //@todo: Подумать над ускорением проверки (ЧИСЛО)
                     $pattern = '#(?<X>\-?\d+(\.\d+)?)\,(?<Y>\-?\d+(\.\d+)?)+#';
@@ -1410,14 +1359,14 @@ class SVGParser implements SVGParserInterface
                     }
                 } // ($LOOKAHEAD_FLAG == SVGPATH_LINETO_ABSOLUTE)
 
-                if ($is_debug && isset($xy)) var_dump($xy);
+                $this->logger->debug("XY: ", [ $xy ]);
             } // endif (нет, это не управляющая последовательность)
 
         } while (!empty($path_fragments));
 
         // обработка мультиполигона
 
-        if ($is_debug) \var_dump($multipolygon);
+        $this->logger->debug("multipolygon: ", [ $multipolygon ]);
 
         return $multipolygon;
     } // convert_SVGElement_to_Polygon
@@ -1426,7 +1375,7 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Circle( $element ): array
+    private function convert_SVGElement_to_Circle(SimpleXMLElement $element): array
     {
         return [
             'x' =>  (string)$element->attributes()->{'cx'} ?? 0,
@@ -1438,7 +1387,7 @@ class SVGParser implements SVGParserInterface
      * @param SimpleXMLElement $element
      * @return array
      */
-    private function convert_SVGElement_to_Rect($element): array
+    private function convert_SVGElement_to_Rect(SimpleXMLElement $element): array
     {
         $x = $element->attributes()->{'x'} ?? 0;
         $y = $element->attributes()->{'y'} ?? 0;
@@ -1446,13 +1395,22 @@ class SVGParser implements SVGParserInterface
         $h = $element->attributes()->{'height'} ?? 0;
 
         // не рисуем rect если высота или ширина меньше предела точности
-        if (0 == (\round($w, $this->ROUND_PRECISION) + \round($h, $this->ROUND_PRECISION)) ) {
+        if (0 == (
+            round($w, $this->ROUND_PRECISION) +
+            round($h, $this->ROUND_PRECISION))
+        ) {
             return [];
         }
 
         return [
-            [ 'x' => 0 + $x, 'y' => 0 + $y ],
-            [ 'x' => $x + $w, 'y' => $y + $h ]
+            [
+                'x' => 0 + $x,
+                'y' => 0 + $y
+            ],
+            [
+                'x' => $x + $w,
+                'y' => $y + $h
+            ]
         ];
 
     }
@@ -1460,10 +1418,10 @@ class SVGParser implements SVGParserInterface
     /**
      * Преобразует массив с данными мультиполигона в JS-строку ( [ [ [][] ], [ [][][] ] ])
      *
-     * @param $multicoords
-     * @return array|string
+     * @param array $multicoords
+     * @return string
      */
-    private function convert_CRS_to_JSString( $multicoords ): array|string
+    private function convert_CRS_to_JSString(array $multicoords):string
     {
         if (empty($multicoords)) {
             return '[]';
@@ -1484,10 +1442,10 @@ class SVGParser implements SVGParserInterface
     /**
      * Преобразует информацию об узле в JS-строку
      *
-     * @param $knot
+     * @param array $knot
      * @return string
      */
-    private function convert_knotCRS_to_JSstring ( $knot ): string
+    private function convert_knotCRS_to_JSstring(array $knot): string
     {
         return '[' . \implode(',', [ $knot['x'], $knot['y'] ]) . ']';
     }
@@ -1502,11 +1460,11 @@ class SVGParser implements SVGParserInterface
     {
         $js_coords_string = [];
 
-        \array_walk( $coords, function($knot) use (&$js_coords_string) {
+        array_walk( $coords, function($knot) use (&$js_coords_string) {
             $js_coords_string[] = $this->convert_knotCRS_to_JSstring( $knot );
         });
 
-        return '[ ' . \implode(', ' , $js_coords_string) . ' ]';
+        return '[ ' . implode(', ' , $js_coords_string) . ' ]';
     }
 
     /* =================== EXPORT ==================== */
@@ -1523,37 +1481,33 @@ class SVGParser implements SVGParserInterface
     {
         $all_paths_text = [];
 
-        foreach($all_paths as $path_id => $path_data )
+        foreach ($all_paths as $path_id => $path_data )
         {
             $coords_js = $path_data['js'];
 
-            $path_data_text = <<<PDT
-        '{$path_id}': {
-PDT;
-            $path_data_text .= "
-            'id': '{$path_id}',
-            'type': '{$path_data['type']}',
-            'coords': {$coords_js}";
+            $path_data_text  = "        '{$path_id}': {";
+            $path_data_text .= "            'id': '{$path_id}',";
+            $path_data_text .= "            'type': '{$path_data['type']}',";
+            $path_data_text .= "            'coords': {$coords_js}";
 
-            if (\array_key_exists('fillColor', $path_data)) {
+            if (isset($path_data['fillColor'])) {
                 $path_data_text .= ', ' . PHP_EOL . "            'fillColor' : '{$path_data['fillColor']}'";
             }
-            if (\array_key_exists('fillOpacity', $path_data)) {
+            if (isset($path_data['fillOpacity'])) {
                 $path_data_text .= ', ' . PHP_EOL . "            'fillOpacity' : '{$path_data['fillOpacity']}'";
             }
-            if (\array_key_exists('fillRule', $path_data)) {
+            if (isset($path_data['fillRule'])) {
                 $path_data_text .= ', ' . PHP_EOL . "            'fillRule' : '{$path_data['fillRule']}'";
             }
-            if (\array_key_exists('title', $path_data)) {
+            if (isset($path_data['title'])) {
                 $path_data_text .= ', ' . PHP_EOL . "            'title' : '{$path_data['title']}'";
             }
-            if (\array_key_exists('desc', $path_data)) {
-                $path_data_text .= ', ' . PHP_EOL . "            'desc' : '{$path_data['desc']}'";
-            }
-
-            if (\array_key_exists('radius', $path_data)) {
-                $path_data_text .= ', ' . PHP_EOL . "            'radius' : '{$path_data['radius']}'";
-            }
+             if (isset($path_data['desc'])) {
+                 $path_data_text .= ', ' . PHP_EOL . "            'desc' : '{$path_data['desc']}'";
+             }
+             if (isset($path_data['radius'])) {
+                 $path_data_text .= ', ' . PHP_EOL . "            'radius' : '{$path_data['radius']}'";
+             }
 
             $path_data_text .= PHP_EOL.'        }';
 
@@ -1561,7 +1515,7 @@ PDT;
         }
 
         // массив строк оборачиваем запятой если нужно
-        return \implode(',' . PHP_EOL, $all_paths_text);
+        return implode(',' . PHP_EOL, $all_paths_text);
     }
 
     /**
@@ -1574,12 +1528,13 @@ PDT;
      */
     private static function property_exists_recursive($object, string $path, string $separator = '->'): bool
     {
-        if (!\is_object($object)) {
+        if (!is_object($object)) {
             return false;
         }
 
         $properties = \explode($separator, $path);
         $property = \array_shift($properties);
+
         if (!\property_exists($object, $property)) {
             return false;
         }
@@ -1599,4 +1554,4 @@ PDT;
 
 }
 
-#-eof-
+#-eof-#

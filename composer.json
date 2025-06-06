@@ -15,8 +15,9 @@
         "ext-libxml": "*",
         "ext-json": "*",
         "ext-xmlreader": "*",
-        "karelwintersky/arris.entity": "^0",
-        "karelwintersky/arris.xml-navigator": "^0"
+        "karelwintersky/arris.entity": "^1",
+        "karelwintersky/arris.toolkit.xml-navigator": "^0.99.1",
+        "psr/log": "^3.0"
     },
     "autoload": {
         "psr-4": {
